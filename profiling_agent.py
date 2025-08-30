@@ -338,14 +338,13 @@ class ProfilingAgent:
             else:
                 mac_reduction_needed = 50.0  # Default 50% reduction
             
-            # Call LLM for deeper insights with MAC context
             prompt_text = PROFILING_PROMPT.format(
                 model_arch=str(model_name),
                 dataset=dataset,
                 num_classes=num_classes,
                 input_size=input_size,
-                baseline_macs=baseline_macs/1e9,  # Convert to G for LLM
-                target_macs=target_macs/1e9,      # Convert to G for LLM
+                baseline_macs=baseline_macs/1e9 if baseline_macs is not None else 0.0,
+                target_macs=target_macs,
                 macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                 macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
                 overshoot_upper_bound=overshoot_upper_bound,
@@ -394,8 +393,8 @@ class ProfilingAgent:
                     dataset=dataset,
                     num_classes=num_classes,
                     input_size=input_size,
-                    baseline_macs=baseline_macs/1e9,  # Convert to G for LLM
-                    target_macs=target_macs/1e9,      # Convert to G for LLM
+                    baseline_macs=baseline_macs/1e9 if baseline_macs is not None else 0.0,
+                    target_macs=target_macs,
                     macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                     macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
                     overshoot_upper_bound=overshoot_upper_bound,

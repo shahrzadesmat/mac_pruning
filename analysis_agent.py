@@ -563,21 +563,24 @@ class AnalysisAgent:
         print(f"   History entries: {len(history)}")
         print(f"   Dataset: {dataset}")
 
-        baseline_str = f"{float(baseline_macs)/1e9:.3f}G" if baseline_macs is not None else "N/A"
-        target_str   = f"{float(target_macs)/1e9:.3f}G"   if target_macs   is not None else "N/A"
+        baseline_str = f"{baseline_macs:.3f}G" if baseline_macs is not None else "N/A"
+        target_str   = f"{target_macs:.3f}G"   if target_macs   is not None else "N/A"
         print(f"   MACs-first: baseline={baseline_str}, target={target_str}, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%")
 
+        print(" macs_overshoot_tolerance_pct value in analysis_agent.py is:",  macs_overshoot_tolerance_pct)
+        print(" macs_undershoot_tolerance_pct value in analysis_agent.py is:",  macs_undershoot_tolerance_pct)
 
         # Get comprehensive analysis and base prompt
         base_prompt = learning_analyzer.create_enhanced_cnn_learning_prompt(
-            target_ratio, model_name, history, dataset, strategic_guidance
+            target_ratio, model_name, history, dataset, strategic_guidance, baseline_macs, 
+            target_macs, macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct
         )
 
         # Prepend MACs-first header if available
         if target_macs is not None:
             macs_header = f"""MACs-FIRST OBJECTIVE
             =====================
-            - Baseline MACs: {baseline_macs:.3f}G
+            - Baseline MACs: {baseline_str}
             - Target  MACs:  {target_macs:.3f}G
             - Overshoot tolerance (strict): +{macs_overshoot_tolerance_pct:.1f}%
             - Undershoot tolerance (lenient): -{macs_undershoot_tolerance_pct:.1f}%
@@ -998,7 +1001,7 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         if target_macs is not None:
             macs_line = (
                 f"\nMACs-FIRST OBJECTIVE:\n"
-                f"- Baseline MACs: {baseline_macs:.3f}G\n"
+                f"- Baseline MACs: {(f'{baseline_macs:.3f}G' if baseline_macs is not None else 'N/A')}\n"
                 f"- Target  MACs:  {target_macs:.3f}G\n"
                 f"- Overshoot tolerance (strict): +{macs_overshoot_tolerance_pct:.1f}%\n"
                 f"- Undershoot tolerance (lenient): -{macs_undershoot_tolerance_pct:.1f}%\n"
@@ -2029,7 +2032,7 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
             ================================================================
             """
 
-            multiplier_analysis = self._analyze_multiplier_patterns(history, target_ratio, dataset)
+            multiplier_analysis = self._analyze_multiplier_patterns(history, target_ratio, dataset, macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct)
             # existing heuristic direction text
             direction_guidance = self._generate_direction_guidance(history, target_ratio)
 

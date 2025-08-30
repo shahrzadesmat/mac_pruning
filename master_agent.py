@@ -163,7 +163,8 @@ class MasterAgent:
         formatted += f"\nMAC-SPECIFIC INSIGHTS FOR {dataset.upper()}:\n"
         
         if mac_outcomes['accuracy'] and mac_outcomes['mac_efficiency']:
-            best_accuracy = max(mac_outcomes['accuracy'])
+            accuracies = [acc for acc in mac_outcomes['accuracy'] if acc is not None]
+            best_accuracy = max(accuracies) if accuracies else 0.0
             best_mac_efficiency = min([eff for eff in mac_outcomes['mac_efficiency'] if eff is not None])
             avg_accuracy = sum(mac_outcomes['accuracy']) / len(mac_outcomes['accuracy'])
             

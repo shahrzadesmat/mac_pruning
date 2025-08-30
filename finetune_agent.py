@@ -15,6 +15,8 @@ from data.loaders import get_imagenet_folder_loaders_pbench
 
 from utils.timing import time_it, time_it_async
 import copy
+from utils import logging_wandb
+import os
 
 
 
@@ -424,7 +426,7 @@ class FineTuningAgent:
             print(f"  - Status: {'✅ SUCCESS' if improvement > 0 else '⚠️ NO GAIN'}")
 
             # Log fine-tuning results to WandB
-            log_to_wandb({
+            logging_wandb.log_to_wandb({
                 "best_accuracy": best_val_acc,
                 "accuracy_improvement": improvement,
                 "zero_shot_baseline": zero_shot,

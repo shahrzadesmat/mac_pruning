@@ -1015,12 +1015,15 @@ class CNNLearningAnalyzer:
         history,
         dataset,
         strategic_guidance=None,
-        baseline_macs=None,               # NEW: baseline MACs (G)
-        target_macs=None,                 # NEW: target MACs (G)
+        baseline_macs=None,
+        target_macs=None, 
         macs_overshoot_tolerance_pct=1.0, 
         macs_undershoot_tolerance_pct=5.0
         ):
         """Create an enhanced prompt with comprehensive CNN learning analysis (MAC-first)."""
+
+        print(" macs_overshoot_tolerance_pct value in analysis_cnn.py is:",  macs_overshoot_tolerance_pct)
+        print(" macs_undershoot_tolerance_pct value in analysis_cnn.py is:",  macs_undershoot_tolerance_pct)
 
         # Get comprehensive analysis - FIXED: pass MAC parameters
         learning_analysis = self.analyze_cnn_channel_patterns(
@@ -1029,7 +1032,6 @@ class CNNLearningAnalyzer:
             target_macs=target_macs,
             macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
             macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
-
         )
 
         # Format the analysis for the LLM - FIXED: pass MAC parameters
@@ -1038,7 +1040,6 @@ class CNNLearningAnalyzer:
             baseline_macs=baseline_macs,
             macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
             macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
-
         )
 
         # Strategic guidance text
@@ -1057,7 +1058,7 @@ class CNNLearningAnalyzer:
         
         # Calculate MAC efficiency target
         efficiency_target = (target_macs / baseline_macs * 100) if (baseline_macs and target_macs) else "N/A"
-        efficiency_str = f"{efficiency_target:.1f}%" if efficiency_target != "N/A" else "N/A"
+        efficiency_str = f"{efficiency_target:.1f}%" if isinstance(efficiency_target, (int, float)) else "N/A"
 
         prompt = f"""You are a CNN pruning expert with advanced MAC-based learning capabilities.
 
@@ -1180,7 +1181,7 @@ class CNNLearningAnalyzer:
                 header_lines.append(f"- Average MAC efficiency: {efficiency:.1f}% of baseline (target: {target_efficiency:.1f}%)")
         else:
             # Legacy fallback - but we need target_ratio, so we'll estimate from MAC if possible
-            target_ratio_est = 1 - (target_macs / baseline_macs) if (baseline_macs and target_macs) else 0.3
+            target_ratio_est = 1 - (target_macs / baseline_macs) if (baseline_macs is not None and target_macs is not None) else 0.3
             header_lines.append(f"- Average achieved: {avg_achieved_ratio*100:.1f}% (estimated target: {target_ratio_est*100:.1f}%)" if avg_achieved_ratio is not None else "- Average achieved: N/A")
             header_lines.append(f"- Average deviation: {avg_deviation*100:.1f}%" if avg_deviation is not None else "- Average deviation: N/A")
 
@@ -1271,7 +1272,8 @@ class CNNLearningAnalyzer:
 
     ⚠️ CRITICAL MAC-BASED INSTRUCTIONS:
     Primary Goal: Achieve {_fmt_g(target_macs)} +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% MAC operations
-    - Target Range: {_fmt_g(target_macs - (target_macs * macs_undershoot_tolerance_pct / 100) if target_macs else 0)} - {_fmt_g(target_macs + (target_macs * macs_overshoot_tolerance_pct / 100) if target_macs else 0)}    - Use historical MAC patterns above to guide channel ratio selection
+    - Target Range: {_fmt_g((target_macs * (1 - macs_undershoot_tolerance_pct / 100)) if target_macs else 0)} - {_fmt_g((target_macs * (1 + macs_overshoot_tolerance_pct / 100)) if target_macs else 0)}    
+    - Use historical MAC patterns above to guide channel ratio selection
     - Prioritize channel ratios with high MAC success rates and good accuracy
     - Do not repeat failed channel-ratio patterns that missed MAC targets
     - Focus on MAC efficiency, not parameter reduction percentages

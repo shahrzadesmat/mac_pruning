@@ -18,7 +18,7 @@ The results will be used to guide a MAC-budget pruning process for model compres
 
 Model architecture: {model_arch}
 Dataset: {dataset} ({num_classes} classes, {input_size}x{input_size} input)
-Baseline MACs: {baseline_macs/1e9:.2f}G
+Baseline MACs: {baseline_macs:.2f}G
 Overshoot tolerance (strict; % allowed ABOVE target): {macs_overshoot_tolerance_pct:.1f}%
 Undershoot tolerance (lenient; % allowed BELOW target): {macs_undershoot_tolerance_pct:.1f}%
 Target MACs: {target_macs:.2f}G (+{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}% tolerance)

@@ -12,6 +12,7 @@ from data.loaders import get_imagenet_folder_loaders_pbench
 
 from utils.timing import time, time_it, time_it_async
 from utils import logging_wandb
+import os
 
 
 class EvaluationAgent:
@@ -441,7 +442,7 @@ class EvaluationAgent:
                 if 'accuracy_improvement' in eval_results:
                     eval_wandb_metrics["accuracy_improvement"] = eval_results['accuracy_improvement']
 
-            log_to_wandb(eval_wandb_metrics, step_name="evaluation", dataset=dataset)
+            logging_wandb.log_to_wandb(eval_wandb_metrics, step_name="evaluation", dataset=dataset)
 
             return {**state, 'evaluation_results': eval_results}
 
