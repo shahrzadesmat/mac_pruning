@@ -8,8 +8,8 @@ Analyze the model architecture and identify:
 3. Structural constraints that must be maintained
 4. MAC efficiency opportunities in different layers
 5. Asymmetric tolerance policy (IMPORTANT):
-   - Overshoot = achieved MACs above target_macs. Must be ≤ +{macs_overshoot_tolerance_pct:.1f}% of target (upper bound {(target_macs*(1 + macs_overshoot_tolerance_pct/100)):.2f}G).
-   - Undershoot = achieved MACs below target_macs. Allowed down to -{macs_undershoot_tolerance_pct:.1f}% of target (lower bound {(target_macs*(1 - macs_undershoot_tolerance_pct/100)):.2f}G).
+   - Overshoot = achieved MACs above target_macs. Must be ≤ +{macs_overshoot_tolerance_pct:.1f}% of target (upper bound {overshoot_upper_bound:.2f}G).
+   - Undershoot = achieved MACs below target_macs. Allowed down to -{macs_undershoot_tolerance_pct:.1f}% of target (lower bound {undershoot_lower_bound:.2f}G).
    - Preference rule: when accuracy is comparable, follow the user's CLI preference (no default). If unspecified, treat valid overshoots and undershoots equally within their respective tolerances.
    - Reporting: for each candidate, state “overshoot” or “undershoot” and the delta from target in both % and G.
 
@@ -23,7 +23,7 @@ Overshoot tolerance (strict; % allowed ABOVE target): {macs_overshoot_tolerance_
 Undershoot tolerance (lenient; % allowed BELOW target): {macs_undershoot_tolerance_pct:.1f}%
 Target MACs: {target_macs:.2f}G (+{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}% tolerance)
 MAC reduction needed: {mac_reduction_needed:.1f}%
-Accepted MAC range: {(target_macs * (1 - macs_undershoot_tolerance_pct / 100)):.2f}G–{(target_macs * (1 + macs_overshoot_tolerance_pct / 100)):.2f}G
+Accepted MAC range: {undershoot_lower_bound:.2f}G–{overshoot_upper_bound:.2f}G
 
 Is subsequent profile: {is_subsequent}
 {subsequent_info}

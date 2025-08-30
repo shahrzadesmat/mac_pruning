@@ -39,6 +39,8 @@ class ProfilingAgent:
         macs_overshoot_tolerance_pct = state.get('macs_overshoot_tolerance_pct', 1.0)
         macs_undershoot_tolerance_pct = state.get('macs_undershoot_tolerance_pct', 5.0)
 
+        overshoot_upper_bound = (target_macs * (1 + macs_overshoot_tolerance_pct/100)) / 1e9
+        undershoot_lower_bound = (target_macs * (1 - macs_undershoot_tolerance_pct/100)) / 1e9
 
         print(f"[🔍] MAC-aware profiling of {model_name} for {dataset} ({num_classes} classes, {input_size}x{input_size})")
         baseline_str = f"{baseline_macs/1e9:.3f}G" if baseline_macs is not None else "N/A"
@@ -346,6 +348,8 @@ class ProfilingAgent:
                 target_macs=target_macs/1e9,      # Convert to G for LLM
                 macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                 macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
+                overshoot_upper_bound=overshoot_upper_bound,
+                undershoot_lower_bound=undershoot_lower_bound,
                 mac_reduction_needed=mac_reduction_needed,
                 dataset_considerations=dataset_content['dataset_guidance'],
                 is_subsequent=is_subsequent,
@@ -394,6 +398,8 @@ class ProfilingAgent:
                     target_macs=target_macs/1e9,      # Convert to G for LLM
                     macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                     macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
+                    overshoot_upper_bound=overshoot_upper_bound,
+                    undershoot_lower_bound=undershoot_lower_bound,
                     mac_reduction_needed=mac_reduction_needed,
                     dataset_considerations=dataset_content['dataset_guidance'],
                     is_subsequent=is_subsequent,
