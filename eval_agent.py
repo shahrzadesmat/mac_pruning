@@ -11,7 +11,7 @@ from llm.provider import get_llm
 from data.loaders import get_imagenet_folder_loaders_pbench
 
 from utils.timing import time, time_it, time_it_async
-from utils.wandb_utils import log_to_wandb
+from utils import logging_wandb
 
 
 class EvaluationAgent:
