@@ -562,8 +562,11 @@ class AnalysisAgent:
         print(f"   Model: {model_name}")
         print(f"   History entries: {len(history)}")
         print(f"   Dataset: {dataset}")
-        if target_macs is not None:
-            print(f"   MACs-first: baseline={baseline_macs/1e9:.3f}G, target={target_macs/1e9:.3f}G, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%")
+
+        baseline_str = f"{float(baseline_macs)/1e9:.3f}G" if baseline_macs is not None else "N/A"
+        target_str   = f"{float(target_macs)/1e9:.3f}G"   if target_macs   is not None else "N/A"
+        print(f"   MACs-first: baseline={baseline_str}, target={target_str}, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%")
+
 
         # Get comprehensive analysis and base prompt
         base_prompt = learning_analyzer.create_enhanced_cnn_learning_prompt(
