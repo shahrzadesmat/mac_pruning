@@ -11,6 +11,7 @@ from llm.provider import get_llm
 from data.loaders import get_imagenet_folder_loaders_pbench
 
 from utils.timing import time, time_it, time_it_async
+from utils.wandb_utils import log_to_wandb
 
 
 class EvaluationAgent:
@@ -238,10 +239,21 @@ class EvaluationAgent:
                 
             # Extract MAC-based metrics instead of ratio-based
             achieved_macs = float(pruning_results.get('achieved_macs', pruning_results.get('final_macs_g', 0.0)))
-            baseline_macs = float(state.get('baseline_macs', 10.0))
-            target_macs = float(state.get('target_macs', 5.0))
-            macs_overshoot_tolerance_pct = float(state.get('macs_overshoot_tolerance_pct', 1.0))
-            macs_undershoot_tolerance_pct = float(state.get('macs_undershoot_tolerance_pct', 5.0))
+
+            baseline_macs = float(state.get('baseline_macs') or 10.0)   
+
+            def safe_float(value, default):
+                """Safely convert a value to float with fallback"""
+                if value is None:
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            target_macs = safe_float(state.get('target_macs'), 5.0)
+            macs_overshoot_tolerance_pct = safe_float(state.get('macs_overshoot_tolerance_pct'), 1.0)
+            macs_undershoot_tolerance_pct = safe_float(state.get('macs_undershoot_tolerance_pct'), 5.0)
 
 
             # Calculate MAC efficiency and error
@@ -343,7 +355,11 @@ class EvaluationAgent:
             # Check MAC deviation and success flags (dataset-aware)
             mac_overshoot_tolerance_g = target_macs * (macs_overshoot_tolerance_pct / 100.0)
             mac_undershoot_tolerance_g = target_macs * (macs_undershoot_tolerance_pct / 100.0)
-            mac_within_tolerance = abs(achieved_macs - target_macs) <= mac_tolerance_g
+            mac_overshoot_tolerance_g = target_macs * (macs_overshoot_tolerance_pct / 100.0)
+            mac_undershoot_tolerance_g = target_macs * (macs_undershoot_tolerance_pct / 100.0)
+            # Then check against the appropriate tolerance
+            mac_error = achieved_macs - target_macs
+            mac_within_tolerance = (-mac_undershoot_tolerance_g <= mac_error <= mac_overshoot_tolerance_g)
             thresh = state.get('accuracy_threshold', thresholds['accuracy_threshold'])
             
             # Get final accuracy (primary metric for each dataset)

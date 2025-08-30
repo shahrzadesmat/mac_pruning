@@ -1729,37 +1729,52 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         last_entry = history[-1]
         last_achieved = last_entry.get('achieved_ratio', 0)
         last_strategy = last_entry.get('strategy_used', {})
+
+        # Get last attempt MAC results  
+        achieved_macs = last_entry.get('achieved_macs')
+        target_macs = last_entry.get('target_macs')
+
         last_ratios = last_strategy.get('isomorphic_group_ratios', last_strategy)
         last_mlp = last_ratios.get('mlp_multiplier', 0)
         last_qkv = last_ratios.get('qkv_multiplier', 0)
         
-        # Simple direction checks
-        is_undershooting = last_achieved < target_ratio
-        is_overshooting = last_achieved > target_ratio + 0.02
         avg_multiplier_increased = ((current_mlp + current_qkv) / 2) > ((last_mlp + last_qkv) / 2)
-        
-        print(f"   Last achieved: {last_achieved*100:.1f}% vs target {target_ratio*100:.1f}%")
-        print(f"   Undershooting: {is_undershooting}")
-        print(f"   Overshooting: {is_overshooting}")
+
+        if achieved_macs and target_macs:
+            mac_error_pct = (achieved_macs - target_macs) / target_macs * 100
+            # Get tolerance values from the strategy or use defaults
+            macs_overshoot_tolerance_pct = strategy_dict.get('macs_overshoot_tolerance_pct', 10.0)
+            macs_undershoot_tolerance_pct = strategy_dict.get('macs_undershoot_tolerance_pct', 5.0)
+            
+            is_mac_overshooting = mac_error_pct > macs_overshoot_tolerance_pct
+            is_mac_undershooting = mac_error_pct < -macs_undershoot_tolerance_pct
+            
+            print(f"   MAC error: {mac_error_pct:+.1f}% (achieved: {achieved_macs/1e9:.3f}G vs target: {target_macs/1e9:.3f}G)")
+            print(f"   MAC overshooting: {is_mac_overshooting}")
+            print(f"   MAC undershooting: {is_mac_undershooting}")
+        else:
+            is_mac_overshooting = False
+            is_mac_undershooting = False
+            print(f"   No MAC data available for validation")
+
         print(f"   Multipliers increased: {avg_multiplier_increased}")
         
-        # SIMPLE CORRECTION: Only fix obvious wrong directions
-        if is_undershooting and not avg_multiplier_increased:
-            print(f"   ❌ LEARNING ERROR: Undershooting but decreased multipliers")
-            correction_factor = 1.3
+        # MAC-based corrections
+        if is_mac_overshooting and not avg_multiplier_increased:
+            print(f"   ❌ MAC ERROR: MACs too high but didn't increase multipliers")
+            correction_factor = 1.4
             strategy_dict['isomorphic_group_ratios']['mlp_multiplier'] = min(2.0, current_mlp * correction_factor)
             strategy_dict['isomorphic_group_ratios']['qkv_multiplier'] = min(1.8, current_qkv * correction_factor)
             strategy_dict['learning_correction_applied'] = True
-            print(f"   🔧 Applied 30% increase correction")
+            print(f"   🔧 Applied 40% increase to reduce MACs")
             
-        elif is_overshooting and not avg_multiplier_increased:
-            print(f"   ❌ LEARNING ERROR: Overshooting but didn't decrease multipliers enough")
-            reduction_factor = 0.7  # Keep the original 0.7 reduction factor
+        elif is_mac_undershooting and avg_multiplier_increased:
+            print(f"   ❌ MAC ERROR: MACs too low but increased multipliers")
+            reduction_factor = 0.7
             strategy_dict['isomorphic_group_ratios']['mlp_multiplier'] = max(0.1, current_mlp * reduction_factor)
             strategy_dict['isomorphic_group_ratios']['qkv_multiplier'] = max(0.1, current_qkv * reduction_factor)
             strategy_dict['learning_correction_applied'] = True
-            print(f"   🔧 Applied 30% reduction correction")
-            
+            print(f"   🔧 Applied 30% reduction to increase MACs")
         else:
             print(f"   ✅ Learning direction appears correct")
             strategy_dict['learning_correction_applied'] = False

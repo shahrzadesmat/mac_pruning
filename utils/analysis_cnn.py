@@ -26,7 +26,141 @@ class CNNLearningAnalyzer:
             # default fallback
             return 90.0
 
-            
+    def _calculate_trend(self, values):
+        """Calculate trend direction from a list of values."""
+        if len(values) < 2:
+            return 'insufficient_data'
+        
+        # Remove None values
+        clean_values = [v for v in values if v is not None]
+        if len(clean_values) < 2:
+            return 'insufficient_data'
+        
+        # Simple linear trend calculation
+        n = len(clean_values)
+        x_sum = sum(range(n))
+        y_sum = sum(clean_values)
+        xy_sum = sum(i * v for i, v in enumerate(clean_values))
+        x2_sum = sum(i * i for i in range(n))
+        
+        # Calculate slope
+        denominator = n * x2_sum - x_sum * x_sum
+        if abs(denominator) < 1e-10:
+            return 'flat'
+        
+        slope = (n * xy_sum - x_sum * y_sum) / denominator
+        
+        # Classify trend
+        if abs(slope) < 1e-6:
+            return 'flat'
+        elif slope > 0:
+            return 'increasing'
+        else:
+            return 'decreasing'
+    
+    def _check_direction_consistency(self, sorted_attempts, target_value, tolerance_overshoot=1.0, tolerance_undershoot=5.0, value_key='macs_error_pct', adjustment_key='channel_ratio'):
+        """Generic method to check if adjustments consistently move toward target."""
+        if len(sorted_attempts) < 3:
+            return 'insufficient_data'
+
+        correct_moves = 0
+        total_moves = 0
+
+        for i in range(1, len(sorted_attempts)):
+            prev = sorted_attempts[i - 1]
+            curr = sorted_attempts[i]
+
+            prev_error = prev.get(value_key)
+            if prev_error is None:
+                continue
+
+            adjustment_increased = curr[adjustment_key] > prev[adjustment_key]
+
+            # Positive error = over target, need increase; negative = under target, need decrease
+            if prev_error > tolerance_overshoot and adjustment_increased:
+                correct_moves += 1
+            elif prev_error < -tolerance_undershoot and not adjustment_increased:
+                correct_moves += 1
+
+            total_moves += 1
+
+        if total_moves == 0:
+            return 'no_moves'
+
+        ratio = correct_moves / total_moves
+        if ratio >= 0.80:
+            return 'highly_consistent'
+        elif ratio >= 0.60:
+            return 'moderately_consistent'
+        else:
+            return 'inconsistent'
+
+    def _detect_oscillation_pattern(self, sorted_attempts, value_key='macs_error_pct', threshold=0.02):
+        """Detect if the system is oscillating around target values."""
+        if len(sorted_attempts) < 4:
+            return {'oscillating': False, 'reason': 'insufficient_data'}
+
+        values = [a.get(value_key) for a in sorted_attempts if a.get(value_key) is not None]
+        if len(values) < 4:
+            return {'oscillating': False, 'reason': 'insufficient_valid_values'}
+
+        # Check for sign changes (crossing zero/target)
+        sign_changes = 0
+        for i in range(1, len(values)):
+            if (values[i-1] > 0) != (values[i] > 0):  # Sign changed
+                sign_changes += 1
+
+        # Check if errors are consistently above threshold (not converging)
+        recent_errors = [abs(v) for v in values[-3:]]
+        avg_recent_error = sum(recent_errors) / len(recent_errors)
+
+        oscillating = (sign_changes >= len(values) * 0.4 and avg_recent_error > threshold)
+        
+        return {
+            'oscillating': oscillating,
+            'sign_changes': sign_changes,
+            'avg_recent_error': avg_recent_error,
+            'pattern_strength': sign_changes / len(values) if len(values) > 0 else 0
+        }
+
+    def _calculate_convergence_rate(self, sorted_attempts, value_key='macs_error_pct'):
+        """Measure how quickly errors are decreasing."""
+        if len(sorted_attempts) < 3:
+            return {'converging': False, 'reason': 'insufficient_data'}
+
+        errors = [abs(a.get(value_key, float('inf'))) for a in sorted_attempts 
+                if a.get(value_key) is not None]
+        
+        if len(errors) < 3:
+            return {'converging': False, 'reason': 'insufficient_valid_errors'}
+
+        # Calculate improvement rate over recent attempts
+        recent_errors = errors[-3:]
+        if len(recent_errors) >= 2:
+            improvement = recent_errors[0] - recent_errors[-1]
+            rate = improvement / len(recent_errors)
+        else:
+            improvement = 0
+            rate = 0
+
+        # Check if trend is consistently downward
+        decreasing_count = 0
+        for i in range(1, len(recent_errors)):
+            if recent_errors[i] < recent_errors[i-1]:
+                decreasing_count += 1
+
+        converging = (improvement > 0.001 and 
+                    decreasing_count >= len(recent_errors) * 0.6)
+
+        return {
+            'converging': converging,
+            'improvement_rate': rate,
+            'total_improvement': improvement,
+            'recent_error': recent_errors[-1],
+            'decreasing_trend_strength': decreasing_count / max(1, len(recent_errors) - 1)
+        }
+
+
     def analyze_cnn_channel_patterns(self, history, target_ratio, dataset,
                                     baseline_macs=None, target_macs=None, 
                                     macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
@@ -59,7 +193,11 @@ class CNNLearningAnalyzer:
             macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
             macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
         )
-        trend_analysis = self._analyze_channel_trends(attempts, target_macs=target_macs)
+        trend_analysis = self._analyze_channel_trends(
+            attempts, target_macs=target_macs,
+            macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
+            macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
+        )
         failure_analysis = self._analyze_channel_failures(
             attempts, dataset=dataset, 
             macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
@@ -223,8 +361,7 @@ class CNNLearningAnalyzer:
 
         return analysis
 
-
-    def _analyze_channel_trends(self, attempts, target_macs=None):
+    def _analyze_channel_trends(self, attempts, target_macs=None, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
         """Analyze trends in channel ratio adjustments (MACs-first)."""
         if len(attempts) < 3:
             return {'insufficient_data': True}
@@ -237,7 +374,11 @@ class CNNLearningAnalyzer:
             'deviation_trend': self._calculate_trend([a['macs_error_pct'] for a in sorted_attempts if a['macs_error_pct'] is not None]),
             'accuracy_trend': self._calculate_trend([a['accuracy'] for a in sorted_attempts]),
             'is_converging': False,
-            'direction_consistency': self._check_cnn_direction_consistency(sorted_attempts),
+            'direction_consistency': self._check_cnn_direction_consistency(
+                sorted_attempts, 
+                macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
+                macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
+            ),
             'optimal_channel_ratio_estimate': None
         }
 
@@ -250,7 +391,7 @@ class CNNLearningAnalyzer:
         return trend_analysis
 
 
-    def _check_cnn_direction_consistency(self, sorted_attempts):
+    def _check_cnn_direction_consistency(self, sorted_attempts, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
         """Check if channel ratio adjustments consistently move MACs error toward 0%."""
         if len(sorted_attempts) < 3:
             return 'insufficient_data'

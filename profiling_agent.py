@@ -45,8 +45,20 @@ class ProfilingAgent:
         target_str = f"{target_macs/1e9:.3f}G" if target_macs is not None else "N/A"
         print(f"[🔍] MAC Context: {baseline_str} → {target_str} (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
 
-        
-                
+
+        def safe_float(value, default):
+            """Safely convert a value to float with fallback"""
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        # Apply safe handling to baseline_macs and target_macs at the module level
+        baseline_macs = safe_float(baseline_macs, 10.0)
+        target_macs = safe_float(target_macs, 5.0)
+
         # Prepare subsequent info if this is a re-profiling
         subsequent_info = ""
         if is_subsequent:
@@ -54,21 +66,23 @@ class ProfilingAgent:
             
             # Get MAC results from previous attempts
             achieved_macs = state.get('pruning_results', {}).get('achieved_macs', 
-                             state.get('evaluation_results', {}).get('achieved_macs', 0))
-            mac_efficiency = (achieved_macs / baseline_macs * 100) if achieved_macs and baseline_macs else 0
+                            state.get('evaluation_results', {}).get('achieved_macs', 0))
             
-            # Legacy fallback
-            achieved_ratio = state.get('pruning_results', {}).get('achieved_ratio', 0)
+            # Apply safe handling to achieved_macs
+            achieved_macs = safe_float(achieved_macs, 0.0)
+            
+            # Calculate efficiency safely (baseline_macs is already safe)
+            mac_efficiency = (achieved_macs / baseline_macs) * 100 if baseline_macs > 0 else 0
             
             # Get accuracy based on dataset
             if dataset.lower() == 'imagenet':
                 accuracy = state.get('evaluation_results', {}).get('fine_tuned_top1_accuracy', 
-                          state.get('evaluation_results', {}).get('zero_shot_top1_accuracy', 0))
+                        state.get('evaluation_results', {}).get('zero_shot_top1_accuracy', 0))
                 accuracy_type = "Top-1"
             else:
                 accuracy = state.get('evaluation_results', {}).get('accuracy', 0)
                 accuracy_type = "Accuracy"
-            
+
             subsequent_info = f"""
             This is a subsequent MAC-aware profile of a {model_type} model on {dataset}.
             MAC Results: Achieved {achieved_macs/1e9:.3f}G from {baseline_macs/1e9:.3f}G baseline (efficiency: {mac_efficiency:.1f}%)
@@ -78,7 +92,7 @@ class ProfilingAgent:
             Dataset complexity: {dataset} ({num_classes} classes)
             Focus: Optimize MAC allocation for {target_macs/1e9:.3f}G target
             """
-        
+
         # Create a sample model to analyze its architecture or use the provided model
         try:
             device = torch.device("cpu")  # Use CPU for profiling
@@ -175,17 +189,15 @@ class ProfilingAgent:
             if estimated_total_macs is not None and estimated_total_macs > 0:
                 conv_mac_pct = (conv_macs / estimated_total_macs) * 100
                 linear_mac_pct = (linear_macs / estimated_total_macs) * 100
-                mac_percentage = (estimated_macs / estimated_total_macs) * 100
             else:
                 conv_mac_pct = 0
                 linear_mac_pct = 0
-                mac_reduction_needed_pct = 0
 
             mac_distribution = {
                 'conv_layers_mac_pct': conv_mac_pct,
                 'linear_layers_mac_pct': linear_mac_pct,
                 'estimated_baseline_macs': estimated_total_macs / 1e9 if estimated_total_macs else 0,
-                'mac_reduction_needed_pct': mac_reduction_needed_pct
+                'mac_reduction_needed_pct': ((baseline_macs - target_macs) / baseline_macs) * 100 if baseline_macs > 0 else 0
             }
             
             # Get model summary
@@ -203,7 +215,7 @@ class ProfilingAgent:
                 ])
                 sensitivity.extend([
                     "Early layers are more MAC-sensitive to pruning",
-                    f"Target {target_macs:.3f}G requires strategic conv layer MAC reduction"
+                    f"Target {target_macs/1e9:.3f}G requires strategic conv layer MAC reduction"
                 ])
                 
                 # Dataset-specific ResNet considerations
