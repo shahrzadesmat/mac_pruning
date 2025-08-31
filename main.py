@@ -1,4 +1,3 @@
-
 from utils.logging_wandb import add_wandb_args
 from workflow import run_pruning_workflow
 from utils.timing import time_it, time_it_async
@@ -9,10 +8,7 @@ import copy
 from torchvision import datasets, transforms
 from typing import TypedDict, List, Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
-
-# from langchain_openai import ChatOpenAI
 from deepseek_llm import DeepSeekLLM
-
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 import torch
@@ -59,18 +55,13 @@ from torch.utils.data import Subset
 import gc
 import psutil
 import warnings
-from datetime import datetime
-import argparse
 import traceback
 from utils.timing import time_it, time_it_async, profiler
-
+import argparse
 
 
 
 if __name__ == "__main__":
-    import argparse
-    from datetime import datetime
-    
     parser = argparse.ArgumentParser(description='Run dataset-aware pruning workflow with master agent')
     parser.add_argument('--model', type=str, default='resnet50', help='Model to prune')
     parser.add_argument('--macs_target_g', type=float, default=None, help='Target absolute MACs in G (e.g., 4.2 means 4.2G).')
@@ -612,7 +603,9 @@ if __name__ == "__main__":
                         zs_top5_str = f"{zs_top5:.1f}%" if isinstance(zs_top5, (int, float)) and zs_top5 is not None else "N/A"
                         ft_top5_str = f"{ft_top5:.1f}%" if ft_top5 is not None else "N/A"
                         
-                        print(f"{i:<5}{float(t_macs)/1e9:>8.2f}G    {float(a_macs)/1e9:>8.2f}G      {red_pct:>6.1f}%  {zs_top1_str:<10}{ft_top1_str:<10}{zs_top5_str:<10}{ft_top5_str:<10}{criterion:<10}")
+                        t_macs_str = f"{float(t_macs)/1e9:>8.2f}G" if t_macs is not None else "    N/A    "
+                        a_macs_str = f"{float(a_macs)/1e9:>8.2f}G" if a_macs is not None else "    N/A    "
+                        print(f"{i:<5}{t_macs_str}    {a_macs_str}      {red_pct:>6.1f}%  {zs_top1_str:<10}{ft_top1_str:<10}{zs_top5_str:<10}{ft_top5_str:<10}{criterion:<10}")
 
                         
                     else:  # CIFAR-10
@@ -621,10 +614,14 @@ if __name__ == "__main__":
                         
                         if ft_acc is None or zs_acc is None:
                             zs_display = f"{zs_acc:.1f}%" if isinstance(zs_acc, (int, float)) and zs_acc is not None else "N/A"
-                            print(f"{i:<5}{float(t_macs)/1e9:>8.2f}G    {float(a_macs)/1e9:>8.2f}G      {red_pct:>6.1f}%  {zs_display:<10}Skipped  N/A     {criterion:<10}")
+                            t_macs_str = f"{float(t_macs)/1e9:>8.2f}G" if t_macs is not None else "    N/A    "
+                            a_macs_str = f"{float(a_macs)/1e9:>8.2f}G" if a_macs is not None else "    N/A    "
+                            print(f"{i:<5}{t_macs_str}    {a_macs_str}      {red_pct:>6.1f}%  {zs_display:<10}Skipped  N/A     {criterion:<10}")
                         else:
                             imp = ft_acc - zs_acc if zs_acc is not None else 0
-                            print(f"{i:<5}{float(t_macs)/1e9:>8.2f}G    {float(a_macs)/1e9:>8.2f}G      {red_pct:>6.1f}%  {zs_acc:.1f}%    {ft_acc:.1f}%  {imp:+.1f}%  {criterion:<10}")
+                            t_macs_str = f"{float(t_macs)/1e9:>8.2f}G" if t_macs is not None else "    N/A    "
+                            a_macs_str = f"{float(a_macs)/1e9:>8.2f}G" if a_macs is not None else "    N/A    "
+                            print(f"{i:<5}{t_macs_str}    {a_macs_str}      {red_pct:>6.1f}%  {zs_acc:.1f}%    {ft_acc:.1f}%  {imp:+.1f}%  {criterion:<10}")
 
             # Better recommendations based on failure type
             print(f"\n[📝] Final {args.dataset.upper()} Recommendation:")

@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from typing import TypedDict, Any, List, Dict
 import torch.nn as nn
 import os
+import torch
+import json
+from datetime import datetime
+
 
 
 async def save_final_best_model(state):
@@ -67,7 +71,7 @@ async def save_final_best_model(state):
 
     achieved_macs = best_candidate.get('achieved_macs', 0)
     revision = best_candidate.get('revision', 0)
-    mac_efficiency = (achieved_macs / baseline_macs) * 100 if baseline_macs > 0 else 0
+    mac_efficiency = (achieved_macs / baseline_macs) * 100 if baseline_macs is not None and baseline_macs > 0 else 0
 
     print(
         f"\n[🏆] Selected revision {revision} "
@@ -82,25 +86,38 @@ async def save_final_best_model(state):
     checkpoint_src = None
     pruned_checkpoint = best_candidate.get('pruned_model_checkpoint')
 
-    # 3‑A: Load from the stored checkpoint
+    # 3‑A: Load from the stored checkpoint with multiple key attempts
     if pruned_checkpoint and os.path.exists(pruned_checkpoint):
         try:
             ckpt = torch.load(pruned_checkpoint, map_location='cpu')
-            pruned_model = ckpt.get('complete_model')
-            checkpoint_src = pruned_checkpoint
-            if pruned_model:
+            print(f"[DEBUG] Checkpoint keys: {list(ckpt.keys())}")
+            
+            # Try different possible keys where the model might be stored
+            pruned_model = (ckpt.get('complete_model') or 
+                        ckpt.get('model') or
+                        ckpt.get('pruned_model') or
+                        ckpt.get('state_dict'))
+            
+            # If still None and there's only one item, assume that's the model
+            if pruned_model is None and len(ckpt.keys()) == 1:
+                pruned_model = list(ckpt.values())[0]
+                print(f"[INFO] Using single checkpoint value as model")
+            
+            if pruned_model is not None:
+                checkpoint_src = pruned_checkpoint
                 print(f"[✅] Loaded pruned model object from {pruned_checkpoint}")
+            else:
+                print(f"[⚠️] No model found in checkpoint keys: {list(ckpt.keys())}")
+                
         except Exception as e:
             print(f"[⚠️] Failed to load {pruned_checkpoint}: {e}")
 
-    # 3‑B: Fallback to model stored in workflow state
-    if pruned_model is None and 'prune' in state and 'model' in state['prune']:
-        pruned_model = state['prune']['model']
-        checkpoint_src = "current_state_pruned"
-        print("[✅] Using pruned model from current workflow state")
 
     if pruned_model is None:
-        print("[❌] No pruned model object found – nothing saved")
+        print(f"[❌] No pruned model object found for best candidate (revision {revision})")
+        print(f"[INFO] Checkpoint path was: {pruned_checkpoint}")
+        print(f"[INFO] This likely means the checkpoint saving during workflow needs to be fixed")
+        print("[❌] Nothing saved")
         return state
 
     # ──────────────────────────────────────────────────────────────────────────

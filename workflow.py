@@ -162,8 +162,7 @@ def create_pruning_workflow():
             
             avoid_combinations = strategic_guidance.get('avoid_combinations', [])
             recommendations = strategic_guidance.get('strategic_recommendations', [])
-            acceptable_mac_range = strategic_guidance.get('acceptable_mac_range', {})
-            
+                        
             if avoid_combinations:
                 print(f"   🚫 Avoid combinations: {avoid_combinations}")
             
@@ -172,11 +171,6 @@ def create_pruning_workflow():
             
             if len(recommendations) > 3:
                 print(f"   ... and {len(recommendations) - 3} more recommendations")
-            
-            if acceptable_mac_range:
-                min_macs = acceptable_mac_range.get('min_acceptable_macs_g', 0)
-                max_macs = acceptable_mac_range.get('max_acceptable_macs_g', 0)
-                print(f"   📊 Acceptable MAC range: {min_macs:.3f}G to {max_macs:.3f}G")
             
             print(f"[🧠] Analysis Agent will interpret this MAC guidance and calculate specific parameters...")
             
@@ -1333,11 +1327,18 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
         
         print(f"[📊] Total workflow steps: {step_count}")
         print(f"[💾] Final state keys: {list(GLOBAL_STATE.keys())}")
-        
+
         # Save final best model
-        print(f"[💾] Saving final best model...")
+        print("[💾] Saving final best model...")
+
+        if MODEL_STORE is not None:
+            prune_section = GLOBAL_STATE.get('prune')
+            if not isinstance(prune_section, dict):
+                prune_section = {}
+                GLOBAL_STATE['prune'] = prune_section
+            prune_section['model'] = MODEL_STORE
+
         GLOBAL_STATE = await save_final_best_model(GLOBAL_STATE)
-              
         return GLOBAL_STATE
 
     except Exception as e:

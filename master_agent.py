@@ -163,12 +163,13 @@ class MasterAgent:
         formatted += f"\nMAC-SPECIFIC INSIGHTS FOR {dataset.upper()}:\n"
         
         if mac_outcomes['accuracy'] and mac_outcomes['mac_efficiency']:
-            accuracies = [acc for acc in mac_outcomes['accuracy'] if acc is not None]
-            best_accuracy = max(accuracies) if accuracies else 0.0
+            valid_accuracies = [acc for acc in mac_outcomes['accuracy'] if acc is not None]
+            best_accuracy = max(valid_accuracies) if valid_accuracies else 0.0
+            min_accuracy = min(valid_accuracies) if valid_accuracies else 0.0
+            avg_accuracy = sum(valid_accuracies) / len(valid_accuracies) if valid_accuracies else 0.0
             best_mac_efficiency = min([eff for eff in mac_outcomes['mac_efficiency'] if eff is not None])
-            avg_accuracy = sum(mac_outcomes['accuracy']) / len(mac_outcomes['accuracy'])
             
-            formatted += f"- {metric_name} range: {min(mac_outcomes['accuracy']):.2f}% to {best_accuracy:.2f}% (avg: {avg_accuracy:.2f}%)\n"
+            formatted += f"- {metric_name} range: {min_accuracy:.2f}% to {best_accuracy:.2f}% (avg: {avg_accuracy:.2f}%)\n"
             formatted += f"- Best MAC efficiency: {best_mac_efficiency:.1f}% of baseline operations\n"
             formatted += f"- MAC target: {target_macs:.3f}G ({(target_macs/baseline_macs*100):.1f}% efficiency target)\n"
             
@@ -558,7 +559,7 @@ CRITICAL JSON OUTPUT REQUIREMENTS:
         )
         if local_optimum_trap:
             return self._generate_mac_exploration_strategy(
-                local_optimum_trap, target_macs, baseline_macs
+                local_optimum_trap, target_macs, baseline_macs, macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct
             )
 
         # ---------- (2) high-accuracy MAC near-misses ----------
