@@ -58,8 +58,10 @@ class ProfilingAgent:
                 return default
 
         # Apply safe handling to baseline_macs and target_macs at the module level
-        baseline_macs = safe_float(baseline_macs, 10.0)
-        target_macs = safe_float(target_macs, 5.0)
+        original_baseline_macs = baseline_macs
+        original_target_macs = target_macs
+        baseline_macs_for_calc = safe_float(baseline_macs, 10.0)
+        target_macs_for_calc = safe_float(target_macs, 5.0)
 
         # Prepare subsequent info if this is a re-profiling
         subsequent_info = ""
@@ -74,7 +76,7 @@ class ProfilingAgent:
             achieved_macs = safe_float(achieved_macs, 0.0)
             
             # Calculate efficiency safely (baseline_macs is already safe)
-            mac_efficiency = (achieved_macs / baseline_macs) * 100 if baseline_macs > 0 else 0
+            mac_efficiency = (achieved_macs / baseline_macs_for_calc) * 100 if baseline_macs_for_calc > 0 else 0
             
             # Get accuracy based on dataset
             if dataset.lower() == 'imagenet':
@@ -87,8 +89,8 @@ class ProfilingAgent:
 
             subsequent_info = f"""
             This is a subsequent MAC-aware profile of a {model_type} model on {dataset}.
-            MAC Results: Achieved {achieved_macs/1e9:.3f}G from {baseline_macs/1e9:.3f}G baseline (efficiency: {mac_efficiency:.1f}%)
-            Target MAC: {target_macs/1e9:.3f}G (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance)
+            MAC Results: Achieved {achieved_macs/1e9:.3f}G from {baseline_macs_for_calc/1e9:.3f}G baseline (efficiency: {mac_efficiency:.1f}%)
+            Target MAC: {target_macs_for_calc/1e9:.3f}G (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance)
             Current {accuracy_type}: {accuracy:.2f}%
             Revision number: {state.get('revision_number', 0)}
             Dataset complexity: {dataset} ({num_classes} classes)
@@ -118,6 +120,18 @@ class ProfilingAgent:
             # Dataset-aware input size
             example_inputs = (torch.randn(1, 3, input_size, input_size),)
             print(f"[🔍] Using input size: {input_size}x{input_size}")
+
+            # Calculate actual baseline MACs if not provided
+            if original_baseline_macs is None:
+                model.eval()
+                with torch.no_grad():
+                    # TODO: Replace with fvcore/ptflops when available
+                    # For now, we'll calculate it from layer analysis below
+                    measured_baseline_macs = None  # Will be set after layer analysis
+                    print(f"[🔍] Will measure baseline MACs from layer analysis")
+            else:
+                measured_baseline_macs = original_baseline_macs
+                print(f"[🔍] Using provided baseline MACs: {measured_baseline_macs/1e9:.3f}G")
             
             # Extract MAC-aware layer information
             layer_info = []
@@ -130,7 +144,7 @@ class ProfilingAgent:
             
             # Estimate MAC distribution across layers (simplified)
             total_params = sum(p.numel() for p in model.parameters())
-            estimated_total_macs = baseline_macs  # Convert to operations
+            estimated_total_macs = baseline_macs_for_calc  # Convert to operations
             
             # Extract layer information with MAC awareness
             layer_macs = 0
@@ -183,6 +197,10 @@ class ProfilingAgent:
                     if mac_percentage > 10:  # Layers contributing >10% of MAC operations
                         mac_critical_layers.append(f"{name} (high MAC contribution: {mac_percentage:.1f}%)")
             
+            # Set measured baseline if it wasn't provided
+            if original_baseline_macs is None:
+                measured_baseline_macs = layer_macs
+                print(f"[✅] Measured baseline MACs from layers: {measured_baseline_macs/1e9:.3f}G")
             # Build MAC distribution summary
             conv_macs = sum(layer['estimated_macs'] for layer in layer_info if layer['type'] == 'Conv2d')
             linear_macs = sum(layer['estimated_macs'] for layer in layer_info if layer['type'] == 'Linear')
@@ -199,7 +217,7 @@ class ProfilingAgent:
                 'conv_layers_mac_pct': conv_mac_pct,
                 'linear_layers_mac_pct': linear_mac_pct,
                 'estimated_baseline_macs': estimated_total_macs / 1e9 if estimated_total_macs else 0,
-                'mac_reduction_needed_pct': ((baseline_macs - target_macs) / baseline_macs) * 100 if baseline_macs > 0 else 0
+                'mac_reduction_needed_pct': ((baseline_macs_for_calc - target_macs_for_calc) / baseline_macs_for_calc) * 100
             }
             
             # Get model summary
@@ -313,8 +331,9 @@ class ProfilingAgent:
                 "num_classes": num_classes,
                 "input_size": input_size,
                 "model_complexity": "high" if dataset.lower() == 'imagenet' else "moderate",
-                "baseline_macs": baseline_macs,
-                "target_macs": target_macs,
+                "baseline_macs": measured_baseline_macs if original_baseline_macs is None else original_baseline_macs,
+                "target_macs": original_target_macs,
+                "measured_layer_macs": layer_macs,
                 "macs_overshoot_tolerance_pct": macs_overshoot_tolerance_pct,
                 "macs_undershoot_tolerance_pct": macs_undershoot_tolerance_pct,
                 "mac_efficiency_target": mac_efficiency_target
