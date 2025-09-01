@@ -111,6 +111,12 @@ def create_pruning_workflow():
         
         # Use the updated dataset-aware ProfilingAgent
         result = await ProfilingAgent(llm=shared_llm).profile_model(state)
+
+        # Extract baseline_macs to top level immediately
+        if 'profile_results' in result and 'baseline_macs' in result['profile_results']:
+            result['baseline_macs'] = result['profile_results']['baseline_macs']
+            GLOBAL_STATE['baseline_macs'] = result['profile_results']['baseline_macs']
+
         GLOBAL_STATE.update(result)
         return result
 

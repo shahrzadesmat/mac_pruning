@@ -379,11 +379,8 @@ class MasterAgent:
         macs_overshoot_tolerance_pct = state.get('macs_overshoot_tolerance_pct', 1.0)
         macs_undershoot_tolerance_pct = state.get('macs_undershoot_tolerance_pct', 5.0)
         
-        # if they don't exist in state, maybe compute them
-        if baseline_macs is None:
-            # Default fallback - use a reasonable baseline for the model (in raw operations)
-            baseline_macs = 10.0e9  # 10 billion operations default
-            print(f"[⚠️] No baseline_macs found, using default: {baseline_macs/1e9:.3f}G")
+        baseline_macs = state.get('baseline_macs')
+
         if target_macs is None:
             raise ValueError("target_macs must be specified in state. Please provide target MAC operations (e.g., target_macs=8.8e9 for 8.8G operations)")
 

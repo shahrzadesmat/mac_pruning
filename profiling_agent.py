@@ -13,6 +13,8 @@ from data.dataset_content import get_dataset_specific_content
 import timm
 import pbench
 pbench.forward_patch.patch_timm_forward()
+from ptflops import get_model_complexity_info
+import re
 
 
 class ProfilingAgent:
@@ -61,7 +63,7 @@ class ProfilingAgent:
         original_baseline_macs = baseline_macs
         original_target_macs = target_macs
         baseline_macs_for_calc = safe_float(baseline_macs, 10.0)
-        target_macs_for_calc = safe_float(target_macs, 5.0)
+        target_macs_for_calc = safe_float(target_macs, 5.0e9)
 
         # Prepare subsequent info if this is a re-profiling
         subsequent_info = ""
@@ -142,80 +144,40 @@ class ProfilingAgent:
             critical_layers = []  # Layers that absolutely should not be pruned
             mac_critical_layers = []  # Layers critical for MAC efficiency
             
-            # Estimate MAC distribution across layers (simplified)
-            total_params = sum(p.numel() for p in model.parameters())
-            estimated_total_macs = baseline_macs_for_calc  # Convert to operations
-            
-            # Extract layer information with MAC awareness
-            layer_macs = 0
-            for name, module in model.named_modules():
-                if isinstance(module, (nn.Conv2d, nn.Linear, nn.BatchNorm2d)):
-                    params = sum(p.numel() for p in module.parameters())
-                    
-                    # Estimate MAC operations for this layer (simplified)
-                    if isinstance(module, nn.Conv2d):
-                        # Rough MAC estimation for conv layers
-                        output_size = input_size // (2 ** name.count('downsample'))  # Simplified
-                        estimated_macs = params * (output_size ** 2)
-                    elif isinstance(module, nn.Linear):
-                        estimated_macs = params
-                    else:
-                        estimated_macs = params * 0.1  # BatchNorm has fewer operations
-                    
-                    layer_macs += estimated_macs
+            # Use ptflops to get accurate model-wide MAC measurement
+            flops, params_str = get_model_complexity_info(model, (3, input_size, input_size), as_strings=True)
 
-                    if estimated_total_macs is not None and estimated_total_macs > 0:
-                        mac_percentage = (estimated_macs / estimated_total_macs) * 100
-                    else:
-                        mac_percentage = 0
-                    
-                    layer_info.append({
-                        "name": name,
-                        "type": module.__class__.__name__,
-                        "params": params,
-                        "estimated_macs": estimated_macs,
-                        "mac_percentage": mac_percentage
-                    })
-                    
-                    # MAC-aware critical layer identification
-                    if any(x in name for x in ['fc', 'head', 'classifier']) and isinstance(module, nn.Linear):
-                        # Check if this is the final classifier with correct number of classes
-                        if module.out_features == num_classes:
-                            critical_layers.append(f"{name} (final {num_classes}-class classifier)")
-                            if mac_percentage > 5:  # High MAC contribution
-                                mac_critical_layers.append(f"{name} (high MAC classifier: {mac_percentage:.1f}%)")
-                    elif 'conv1' == name or 'patch_embed' in name:
-                        critical_layers.append(f"{name} (initial feature extraction)")
-                        if mac_percentage > 2:
-                            mac_critical_layers.append(f"{name} (MAC-critical input processing: {mac_percentage:.1f}%)")
-                    elif 'downsample' in name:
-                        critical_layers.append(f"{name} (architectural downsample)")
-                    elif 'pos_embed' in name or 'positional_embedding' in name:
-                        critical_layers.append(f"{name} (positional encoding)")
-                    
-                    # Identify high MAC contribution layers
-                    if mac_percentage > 10:  # Layers contributing >10% of MAC operations
-                        mac_critical_layers.append(f"{name} (high MAC contribution: {mac_percentage:.1f}%)")
-            
+            # Extract numeric FLOP value
+            if 'GMac' in flops:
+                flops_numeric = float(flops.replace(' GMac', '')) * 1e9
+            elif 'MMac' in flops:
+                flops_numeric = float(flops.replace(' MMac', '')) * 1e6
+            elif 'KMac' in flops:
+                flops_numeric = float(flops.replace(' KMac', '')) * 1e3
+            else:
+                numbers = re.findall(r'[\d.]+', flops)
+                flops_numeric = float(numbers[0]) * 1e9 if numbers else 10e9
+
+            layer_macs = flops_numeric
+            print(f"[✅] ptflops measured: {flops}, converted to MACs: {layer_macs/1e9:.3f}G")
+
+            # Build simplified layer_info for compatibility
+            layer_info = [{
+                "name": "total_model", 
+                "type": "ptflops_measurement", 
+                "estimated_macs": layer_macs, 
+                "mac_percentage": 100.0
+            }]
+
+            # Set baseline MAC variables
+            estimated_total_macs = layer_macs
+
             # Set measured baseline if it wasn't provided
             if original_baseline_macs is None:
                 measured_baseline_macs = layer_macs
                 print(f"[✅] Measured baseline MACs from layers: {measured_baseline_macs/1e9:.3f}G")
-            # Build MAC distribution summary
-            conv_macs = sum(layer['estimated_macs'] for layer in layer_info if layer['type'] == 'Conv2d')
-            linear_macs = sum(layer['estimated_macs'] for layer in layer_info if layer['type'] == 'Linear')
-            
-
-            if estimated_total_macs is not None and estimated_total_macs > 0:
-                conv_mac_pct = (conv_macs / estimated_total_macs) * 100
-                linear_mac_pct = (linear_macs / estimated_total_macs) * 100
-            else:
-                conv_mac_pct = 0
-                linear_mac_pct = 0
 
             mac_distribution = {
-                'conv_layers_mac_pct': conv_mac_pct,
-                'linear_layers_mac_pct': linear_mac_pct,
                 'estimated_baseline_macs': estimated_total_macs / 1e9 if estimated_total_macs else 0,
                 'mac_reduction_needed_pct': ((baseline_macs_for_calc - target_macs_for_calc) / baseline_macs_for_calc) * 100
             }
@@ -235,18 +197,18 @@ class ProfilingAgent:
                 ])
                 sensitivity.extend([
                     "Early layers are more MAC-sensitive to pruning",
-                    f"Target {target_macs/1e9:.3f}G requires strategic conv layer MAC reduction"
+                    f"Target {target_macs_for_calc/1e9:.3f}G requires strategic conv layer MAC reduction"
                 ])
                 
                 # Dataset-specific ResNet considerations
                 if dataset.lower() == 'imagenet':
                     sensitivity.extend([
-                        f"Pretrained ImageNet features should be preserved while achieving {target_macs:.3f}G MAC target",
+                        f"Pretrained ImageNet features should be preserved while achieving {target_macs_for_calc/1e9:.3f}G MAC target",
                         "Early conv layers critical for low-level feature extraction at scale and MAC efficiency"
                     ])
                     constraints.append("Pretrained weight structure should be maintained for MAC efficiency")
                 else:
-                    sensitivity.append(f"Can be more aggressive with MAC reduction for {target_macs:.3f}G target due to simpler dataset")
+                    sensitivity.append(f"Can be more aggressive with MAC reduction for {target_macs_for_calc/1e9:.3f}G target due to simpler dataset")
                 
             elif "vit" in model_name.lower() or "swin" in model_name.lower():
                 dependencies.extend([
@@ -259,18 +221,18 @@ class ProfilingAgent:
                 ])
                 sensitivity.extend([
                     "Head pruning generally preferred over full layer pruning for MAC optimization",
-                    f"MLP and QKV blocks are primary targets for {target_macs:.3f}G MAC reduction"
+                    f"MLP and QKV blocks are primary targets for {target_macs_for_calc/1e9:.3f}G MAC reduction"
                 ])
                 
                 # Dataset-specific ViT considerations  
                 if dataset.lower() == 'imagenet':
                     sensitivity.extend([
-                        f"Pretrained attention patterns valuable for ImageNet at {target_macs:.3f}G MAC target",
+                        f"Pretrained attention patterns valuable for ImageNet at {target_macs_for_calc/1e9:.3f}G MAC target",
                         "Patch embedding layer critical for image tokenization and MAC efficiency"
                     ])
                     constraints.append("Position embeddings should be preserved for MAC-efficient processing")
                 else:
-                    sensitivity.append(f"Attention layers can handle more aggressive MAC reduction for {target_macs:.3f}G target on simpler datasets")
+                    sensitivity.append(f"Attention layers can handle more aggressive MAC reduction for {target_macs_for_calc/1e9:.3f}G target on simpler datasets")
                 
                 if "swin" in model_name.lower():
                     constraints.append("Window partition mechanisms must be preserved for MAC efficiency")
@@ -279,41 +241,38 @@ class ProfilingAgent:
                 dependencies.append("Standard feed-forward MAC dependencies between layers")
                 sensitivity.extend([
                     "Deeper layers typically less MAC-sensitive to pruning",
-                    f"Target {target_macs:.3f}G requires systematic MAC reduction strategy"
+                    f"Target {target_macs_for_calc:.3f}G requires systematic MAC reduction strategy"
                 ])
                 
                 # Dataset-specific general considerations
                 if dataset.lower() == 'imagenet':
-                    sensitivity.append(f"Complex feature hierarchies require conservative MAC reduction to {target_macs:.3f}G")
+                    sensitivity.append(f"Complex feature hierarchies require conservative MAC reduction to {target_macs_for_calc/1e9:.3f}G")
                 else:
-                    sensitivity.append(f"Simple feature requirements allow aggressive MAC reduction to {target_macs:.3f}G")
+                    sensitivity.append(f"Simple feature requirements allow aggressive MAC reduction to {target_macs_for_calc/1e9:.3f}G")
             
 
-            # MAC-aware dataset-specific constraints and sensitivities
-            if baseline_macs is not None and baseline_macs > 0:
-                mac_efficiency_target = (target_macs / baseline_macs) * 100
-            else:
-                mac_efficiency_target = 50.0
+            mac_efficiency_target = (target_macs_for_calc / baseline_macs_for_calc) * 100
+
             if dataset.lower() == 'imagenet':
                 constraints.extend([
-                    f"1000-class classifier requires substantial MAC capacity at {target_macs:.3f}G target",
+                    f"1000-class classifier requires substantial MAC capacity at {target_macs_for_calc:.3f}G target",
                     f"Complex feature extraction needs sufficient MAC budget ({mac_efficiency_target:.1f}% efficiency)",
                     "Pretrained weights contain valuable learned representations for MAC-efficient processing"
                 ])
                 sensitivity.extend([
                     f"Early layers extract critical low-level features for complex images at {mac_efficiency_target:.1f}% MAC efficiency",
-                    f"Final classifier MAC-sensitive due to 1000-way classification at {target_macs:.3f}G budget",
+                    f"Final classifier MAC-sensitive due to 1000-way classification at {target_macs_for_calc:.3f}G budget",
                     "Middle layers can be MAC-pruned more aggressively than early/late layers"
                 ])
             else:  # CIFAR-10 or similar
                 constraints.extend([
                     f"{num_classes}-class classifier can handle significant MAC reduction",
-                    f"Simpler images require less complex feature extraction at {target_macs:.3f}G target"
+                    f"Simpler images require less complex feature extraction at {target_macs_for_calc/1e9:.3f}G target"
                 ])
                 sensitivity.extend([
-                    f"Final classifier less MAC-sensitive due to fewer classes at {target_macs:.3f}G target",
+                    f"Final classifier less MAC-sensitive due to fewer classes at {target_macs_for_calc:.3f}G target",
                     f"Can use more aggressive MAC reduction ratios to achieve {mac_efficiency_target:.1f}% efficiency",
-                    f"Less risk of feature degradation with aggressive MAC pruning to {target_macs:.3f}G"
+                    f"Less risk of feature degradation with aggressive MAC pruning to {target_macs_for_calc:.3f}G"
                 ])
             
             # Compile MAC-aware profile results with dataset information
@@ -351,19 +310,16 @@ class ProfilingAgent:
                 state.get('accuracy_threshold', 85.0)
             )
             
-            # Calculate MAC reduction metrics for prompt
-            if baseline_macs is not None and target_macs is not None and baseline_macs > 0:
-                mac_reduction_needed = ((baseline_macs - target_macs) / baseline_macs) * 100
-            else:
-                mac_reduction_needed = 50.0  # Default 50% reduction
+
+            mac_reduction_needed = ((baseline_macs_for_calc - target_macs_for_calc) / baseline_macs_for_calc) * 100
             
             prompt_text = PROFILING_PROMPT.format(
                 model_arch=str(model_name),
                 dataset=dataset,
                 num_classes=num_classes,
                 input_size=input_size,
-                baseline_macs=baseline_macs/1e9 if baseline_macs is not None else 0.0,
-                target_macs=target_macs,
+                baseline_macs=baseline_macs_for_calc/1e9,
+                target_macs=target_macs_for_calc,
                 macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                 macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
                 overshoot_upper_bound=overshoot_upper_bound,
@@ -384,7 +340,7 @@ class ProfilingAgent:
             profile_results["analysis"] = response.content
             
             print(f"[✅] MAC-aware profiling complete for {dataset} model with {len(layer_info)} analyzable layers")
-            print(f"[✅] MAC Target: {target_macs/1e9:.3f}G ({mac_efficiency_target:.1f}% efficiency)")
+            print(f"[✅] MAC Target: {target_macs_for_calc/1e9:.3f}G ({mac_efficiency_target:.1f}% efficiency)")
             
             return {'profile_results': profile_results}
             
@@ -401,10 +357,7 @@ class ProfilingAgent:
                     state.get('accuracy_threshold', 85.0)
                 )
                 
-                if baseline_macs is not None and baseline_macs > 0:
-                    mac_reduction_needed = ((baseline_macs - target_macs) / baseline_macs) * 100
-                else:
-                    mac_reduction_needed = 50.0
+                mac_reduction_needed = ((baseline_macs_for_calc - target_macs_for_calc) / baseline_macs_for_calc) * 100
 
                 
                 prompt_text = PROFILING_PROMPT.format(
@@ -412,8 +365,8 @@ class ProfilingAgent:
                     dataset=dataset,
                     num_classes=num_classes,
                     input_size=input_size,
-                    baseline_macs=baseline_macs/1e9 if baseline_macs is not None else 0.0,
-                    target_macs=target_macs,
+                    baseline_macs=baseline_macs_for_calc/1e9,
+                    target_macs=target_macs_for_calc,
                     macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
                     macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct,
                     overshoot_upper_bound=overshoot_upper_bound,
