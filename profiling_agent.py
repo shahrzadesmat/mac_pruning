@@ -62,8 +62,8 @@ class ProfilingAgent:
         # Apply safe handling to baseline_macs and target_macs at the module level
         original_baseline_macs = baseline_macs
         original_target_macs = target_macs
-        baseline_macs_for_calc = safe_float(baseline_macs, 10.0)
-        target_macs_for_calc = safe_float(target_macs, 5.0e9)
+        baseline_macs_for_calc = safe_float(baseline_macs, float('nan'))
+        target_macs_for_calc = safe_float(target_macs, float('nan'))
 
         # Prepare subsequent info if this is a re-profiling
         subsequent_info = ""
@@ -251,7 +251,12 @@ class ProfilingAgent:
                     sensitivity.append(f"Simple feature requirements allow aggressive MAC reduction to {target_macs_for_calc/1e9:.3f}G")
             
 
-            mac_efficiency_target = (target_macs_for_calc / baseline_macs_for_calc) * 100
+            mac_efficiency_target = (
+                (target_macs_for_calc / baseline_macs_for_calc) * 100
+                if isinstance(baseline_macs_for_calc, (int, float)) and baseline_macs_for_calc > 0
+                and isinstance(target_macs_for_calc, (int, float))
+                else None
+            )
 
             if dataset.lower() == 'imagenet':
                 constraints.extend([
@@ -340,7 +345,9 @@ class ProfilingAgent:
             profile_results["analysis"] = response.content
             
             print(f"[✅] MAC-aware profiling complete for {dataset} model with {len(layer_info)} analyzable layers")
-            print(f"[✅] MAC Target: {target_macs_for_calc/1e9:.3f}G ({mac_efficiency_target:.1f}% efficiency)")
+            eff_str = f"{mac_efficiency_target:.1f}%" if mac_efficiency_target is not None else "N/A"
+            print(f"[✅] MAC Target: {target_macs_for_calc/1e9:.3f}G ({eff_str} efficiency)")
+
             
             return {'profile_results': profile_results}
             

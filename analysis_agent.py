@@ -150,8 +150,9 @@ class AnalysisAgent:
         print(f"[🧠] Enhanced Analysis for {dataset} {'CNN' if is_cnn else 'ViT'}")
         if target_macs is not None:
             print(f"[⚙️] MACs-first context: target={target_macs/1e9:.3f}G, "
-                f"baseline={'?.???' if baseline_macs is None else f'{baseline_macs:.3f}G'}, "
+                f"baseline={'?.???' if baseline_macs is None else f'{baseline_macs/1e9:.3f}G'}, "
                 f"tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%")
+
         
         if is_cnn:
             print(f"[🔄] Using CNN LLM-based historical learning")
@@ -161,11 +162,12 @@ class AnalysisAgent:
             print(f"[🔄] Using ViT LLM-based historical learning")  # CHANGED!
             llm_response = await self._execute_vit_analysis_with_history(state, model_name)  # NEW!
         
-        # REMOVED: Math verification - trust LLM completely
         if is_cnn and 'channel_pruning_ratio' in llm_response:
             channel_ratio = llm_response['channel_pruning_ratio']
             print(f"[🤖] LLM selected channel ratio: {channel_ratio:.4f}")
-            print(f"[🎯] Target parameter reduction: {target_ratio:.3f} ({target_ratio*100:.1f}%)")
+            if (baseline_macs is not None) and (target_macs is not None):
+                derived = max(0.0, min(1.0, 1 - (target_macs / baseline_macs)))
+                print(f"[🎯] Derived reduction (display): {derived:.3f} ({derived*100:.1f}%)")
         
         # Use LLM strategy directly
         validated_strategy = llm_response.copy()
@@ -173,7 +175,13 @@ class AnalysisAgent:
         validated_strategy['corrections_applied'] = []
         print(f"[✅] Using LLM strategy directly - no safety overrides")
 
-        # (NEW) Propagate MACs context forward if LLM or state provided it
+        # MACs-first: ignore ratio as a control parameter; rely on MAC budget downstream
+        if (target_macs is not None) and (baseline_macs is not None):
+            validated_strategy.pop('channel_pruning_ratio', None)
+            validated_strategy.pop('pruning_ratio', None)
+
+
+        # Propagate MACs context forward if LLM or state provided it
         # Prefer values from the LLM response, fallback to ones we read from state/SG
         target_macs_out = validated_strategy.get('target_macs', target_macs)
         baseline_macs_out = validated_strategy.get('baseline_macs', baseline_macs)
@@ -195,15 +203,16 @@ class AnalysisAgent:
             'analysis_results': {
                 'strategy_dict': validated_strategy,
                 'importance_criterion': validated_strategy.get('importance_criterion', 'taylor'),
-                'channel_pruning_ratio': validated_strategy.get('channel_pruning_ratio'),
-                'pruning_ratio': validated_strategy.get('pruning_ratio', target_ratio),
+                'channel_pruning_ratio': None if (target_macs is not None and baseline_macs is not None)
+                                        else validated_strategy.get('channel_pruning_ratio'),
+                'pruning_ratio': None if (target_macs is not None and baseline_macs is not None)
+                                else validated_strategy.get('pruning_ratio', target_ratio),
                 'round_to_value': validated_strategy.get('round_to'),
                 'isomorphic_group_ratios': validated_strategy.get('isomorphic_group_ratios', {}),
                 'safety_validated': True,
                 'dataset': dataset,
                 'architecture_type': 'cnn' if is_cnn else 'vit',
                 'llm_driven': True,
-                # (NEW) mirror MACs context inside analysis_results for downstream consumers
                 'baseline_macs': baseline_macs_out,
                 'target_macs': target_macs_out,
                 'macs_overshoot_tolerance_pct': macs_overshoot_tol_out,
