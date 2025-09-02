@@ -112,10 +112,19 @@ def create_pruning_workflow():
         # Use the updated dataset-aware ProfilingAgent
         result = await ProfilingAgent(llm=shared_llm).profile_model(state)
 
-        # Extract baseline_macs to top level immediately
-        if 'profile_results' in result and 'baseline_macs' in result['profile_results']:
-            result['baseline_macs'] = result['profile_results']['baseline_macs']
-            GLOBAL_STATE['baseline_macs'] = result['profile_results']['baseline_macs']
+        # Extract baseline_macs to top level immediately - ENHANCED
+        result_profile = result.get('profile_results', {})
+        if result_profile and 'baseline_macs' in result_profile:
+            calculated_baseline = result_profile['baseline_macs']
+            if calculated_baseline is not None:
+                result['baseline_macs'] = calculated_baseline
+                GLOBAL_STATE['baseline_macs'] = calculated_baseline
+                print(f"[SUCCESS] Extracted baseline_macs: {calculated_baseline/1e9:.3f}G")
+            else:
+                print(f"[ERROR] Profile results contain None baseline_macs")
+        else:
+            print(f"[ERROR] No baseline_macs found in profile_results")
+            print(f"[DEBUG] profile_results keys: {result_profile.keys() if result_profile else 'No profile_results'}")
 
         GLOBAL_STATE.update(result)
         return result
@@ -461,7 +470,16 @@ def create_pruning_workflow():
             continue_optimization = True
             stop_reason = None
         
-        # Use the updated dataset-aware MasterAgent
+
+        
+        # Safety check: ensure baseline_macs is available before calling master agent
+        if state.get('baseline_macs') is None and 'profile_results' in state:
+            profile_baseline = state.get('profile_results', {}).get('baseline_macs')
+            if profile_baseline is not None:
+                state['baseline_macs'] = profile_baseline
+                GLOBAL_STATE['baseline_macs'] = profile_baseline
+                print(f"[FIX] Retrieved baseline_macs from profile_results: {profile_baseline/1e9:.3f}G")
+        
         result = await MasterAgent().analyze_and_direct(state)
         
         # If algorithm decided to stop, override Master Agent's decision
@@ -547,7 +565,8 @@ def create_pruning_workflow():
             achieved_macs = pruning_res.get('achieved_macs', pruning_res.get('final_macs_g', 0.0))
             target_mac = pruning_res.get('target_macs', target_macs)
             
-            print(f"[DEBUG] In {dataset} prune_with_state: |{achieved_macs/1e9:.3f}G - {target_mac:.3f}G|")
+            target_mac_str = f"{target_mac/1e9:.3f}G" if isinstance(target_mac, (int, float)) and target_mac > 0 else f"{target_mac}G"
+            print(f"[DEBUG] In {dataset} prune_with_state: |{achieved_macs/1e9:.3f}G - {target_mac_str}|")
 
             # Calculate MAC error percentage
             if achieved_macs and target_mac and target_mac > 0:
@@ -1131,6 +1150,10 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
 
         macs_overshoot_tolerance_pct = state_mods.get('macs_overshoot_tolerance_pct', 1.0) if state_mods else 1.0
         macs_undershoot_tolerance_pct = state_mods.get('macs_undershoot_tolerance_pct', 5.0) if state_mods else 5.0
+
+        # Validate MAC parameters before creating initial state
+        if target_macs is not None and baseline_macs is None:
+            print(f"[INFO] baseline_macs not provided - will be calculated during profiling")
         
         # Initialize global state with dataset information
         GLOBAL_STATE = {

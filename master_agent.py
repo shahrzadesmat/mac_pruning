@@ -392,6 +392,16 @@ class MasterAgent:
 
         print(f"[🧠] MAC-aware Master Agent analyzing {dataset} pruning strategy")
         print(f"[🧠] Dataset context: {num_classes} classes, {input_size}x{input_size}, threshold: {accuracy_threshold}%")
+        
+        if baseline_macs is None:
+            # Check if we can get it from profile_results
+            profile_baseline = state.get('profile_results', {}).get('baseline_macs')
+            if profile_baseline is not None:
+                baseline_macs = profile_baseline
+                print(f"[DEBUG] Retrieved baseline_macs from profile_results: {baseline_macs/1e9:.3f}G")
+            else:
+                raise ValueError("baseline_macs not found in state or profile_results. Profiling may have failed.")
+
         print(f"[🧠] MAC context: {baseline_macs/1e9:.3f}G → {target_macs/1e9:.3f}G (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
 
         

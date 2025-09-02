@@ -261,7 +261,7 @@ class ProfilingAgent:
             if dataset.lower() == 'imagenet':
                 constraints.extend([
                     f"1000-class classifier requires substantial MAC capacity at {target_macs_for_calc:.3f}G target",
-                    f"Complex feature extraction needs sufficient MAC budget ({mac_efficiency_target:.1f}% efficiency)",
+                    f"Complex feature extraction needs sufficient MAC budget ({mac_efficiency_target:.1f}% efficiency)" if mac_efficiency_target is not None else "Complex feature extraction needs sufficient MAC budget",
                     "Pretrained weights contain valuable learned representations for MAC-efficient processing"
                 ])
                 sensitivity.extend([
@@ -295,7 +295,7 @@ class ProfilingAgent:
                 "num_classes": num_classes,
                 "input_size": input_size,
                 "model_complexity": "high" if dataset.lower() == 'imagenet' else "moderate",
-                "baseline_macs": measured_baseline_macs if original_baseline_macs is None else original_baseline_macs,
+                "baseline_macs": measured_baseline_macs or original_baseline_macs or layer_macs,
                 "target_macs": original_target_macs,
                 "measured_layer_macs": layer_macs,
                 "macs_overshoot_tolerance_pct": macs_overshoot_tolerance_pct,
