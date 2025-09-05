@@ -109,17 +109,17 @@ class PruningAgent:
                 loss.backward()
                 
             print(f"[🧮] Taylor importance calculation complete")
-            return tp.importance.GroupTaylorImportance()
+            return tp.importance.TaylorImportance()
             
         elif importance_type == "l1norm":
             print(f"[🧮] Using L1 norm importance (no gradient computation needed)")
-            return tp.importance.GroupNormImportance(p=1)
+            return tp.importance.MagnitudeImportance(p=1)
         elif importance_type == "l2norm":
             print(f"[🧮] Using L2 norm importance (no gradient computation needed)")
-            return tp.importance.GroupNormImportance(p=2)
+            return tp.importance.MagnitudeImportance(p=2)
         else:
             print(f"[⚠️] Unknown importance type: {importance_type}, falling back to taylor")
-            return tp.importance.GroupTaylorImportance()
+            return tp.importance.TaylorImportance()
 
     def _setup_dataset_loader(self, dataset: str, data_path: str, batch_size: int = 64):
         """Setup dataset-appropriate data loader with fixed ImageNet folder handling"""
@@ -961,21 +961,21 @@ class PruningAgent:
                 imp = self._calculate_importance(model, train_loader, criterion, device, 'taylor')
                 print(f"[🧮] Using Taylor importance (Analysis Agent choice)")
             elif importance_criterion == 'l1norm':
-                imp = tp.importance.GroupNormImportance(p=1)
+                imp = tp.importance.MagnitudeImportance(p=1)
                 print(f"[🧮] Using L1 importance (Analysis Agent choice)")
             elif importance_criterion == 'l2norm':
-                imp = tp.importance.GroupNormImportance(p=2)
+                imp = tp.importance.MagnitudeImportance(p=2)
                 print(f"[🧮] Using L2 importance (Analysis Agent choice)")
             elif importance_criterion == 'random':
-                imp = tp.importance.GroupNormImportance(p=1)  # Use L1 as fallback for random
-                print(f"[🧮] Using L1 importance (random fallback - GroupRandomImportance not available)")
+                imp = tp.importance.RandomImportance()
+                print(f"[🧮] Using Random importance (Analysis Agent choice)")
             elif importance_criterion == 'magnitude':
-                imp = tp.importance.GroupNormImportance(p=1)  # Magnitude is similar to L1
-                print(f"[🧮] Using L1 importance (magnitude equivalent)")
+                imp = tp.importance.MagnitudeImportance(p=1)
+                print(f"[🧮] Using Magnitude importance (Analysis Agent choice)")
             else:
                 # Fallback - but warn about unknown criterion
                 print(f"[⚠️] Unknown importance criterion: {importance_criterion}, falling back to L1")
-                imp = tp.importance.GroupNormImportance(p=1)
+                imp = tp.importance.MagnitudeImportance(p=1)
                 print(f"[🧮] Using L1 importance (fallback)")
             
             # Setup ignored layers (preserve classifier and first conv)

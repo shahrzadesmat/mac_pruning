@@ -1042,13 +1042,13 @@ def mac_aware_isomorphic_pruning(model):
 
     # Initialize importance based on Analysis Agent's MAC-aware recommendation
     if importance_criterion == "taylor":
-        imp = tp.importance.GroupTaylorImportance()
+        imp = tp.importance.TaylorImportance()
     elif importance_criterion == "l1norm":
-        imp = tp.importance.GroupNormImportance(p=1)
+        imp = tp.importance.MagnitudeImportance(p=1)
     elif importance_criterion == "l2norm":
-        imp = tp.importance.GroupNormImportance(p=2)
+        imp = tp.importance.MagnitudeImportance(p=2)
     else:
-        imp = tp.importance.GroupTaylorImportance()  # Default for MAC efficiency
+        imp = tp.importance.TaylorImportance()  # Default for MAC efficiency
 
     # Initialize MAC-aware pruner with dataset-appropriate input size
     example_inputs = (torch.randn(1, 3, {input_size}, {input_size}),)

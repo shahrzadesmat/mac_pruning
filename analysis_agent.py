@@ -311,13 +311,16 @@ class AnalysisAgent:
 
         return guidance
 
-
     async def _execute_cnn_analysis_with_history(self, state, model_name):
-        """
-        ENHANCED: CNN analysis with local optimum detection like ViT
-        Adds MACs-first context (baseline/target MACs and tolerance) if available in state/master guidance.
-        """
-        # Helper to normalize to GMacs (accept raw ops or G)
+        """ENHANCED: Full utilization of CNNLearningAnalyzer capabilities"""
+        
+        # Extract context
+        dataset = state.get('dataset', 'cifar10')
+        target_ratio = state.get('target_pruning_ratio')
+        history = state.get('history', [])
+        current_revision = state.get('revision_number', 0)
+
+        # Helper to normalize to GMacs
         def _to_g(val):
             if val is None:
                 return None
@@ -327,19 +330,13 @@ class AnalysisAgent:
                 return None
             return v / 1e9 if v > 1e6 else v
 
-        dataset = state.get('dataset', 'cifar10')
-        target_ratio = state.get('target_pruning_ratio')
-
-
-        # Pull MACs-first context from state (or master_results->strategic_guidance) if present
+        # MAC context extraction
         baseline_macs_raw = (
             state.get('baseline_macs')
-            or state.get('master_results', {}).get('strategic_guidance', {}).get('baseline_macs')
             or state.get('master_results', {}).get('strategic_guidance', {}).get('baseline_macs')
         )
         target_macs_raw = (
             state.get('target_macs')
-            or state.get('master_results', {}).get('strategic_guidance', {}).get('target_macs')
             or state.get('master_results', {}).get('strategic_guidance', {}).get('target_macs')
         )
         macs_overshoot_tolerance_pct = float(
@@ -351,184 +348,152 @@ class AnalysisAgent:
                     state.get('master_results', {}).get('strategic_guidance', {}).get('macs_undershoot_tolerance_pct', 5.0))
         )
 
-        baseline_macs = _to_g(baseline_macs_raw)
-        target_macs = _to_g(target_macs_raw)
+        baseline_macs = _to_g(baseline_macs_raw) if baseline_macs_raw else None
+        target_macs = _to_g(target_macs_raw) if target_macs_raw else None
 
-
-        macs_context_present = target_macs is not None
+        # Calculate target_ratio from MACs if needed
         if target_ratio is None and baseline_macs and target_macs:
             target_ratio = (baseline_macs - target_macs) / baseline_macs
             print(f"[🔧] Calculated target ratio from MACs: {target_ratio:.3f} ({target_ratio*100:.1f}%)")
         elif target_ratio is None:
             raise ValueError("No target_pruning_ratio provided and no MAC targets available to calculate ratio")
-        history = state.get('history', [])
-        current_revision = state.get('revision_number', 0)
 
-
-        print(f"[🧠] Enhanced CNN Analysis with Historical Learning:")
-        print(f"   Target (ratio fallback): {target_ratio:.3f}")
-        print(f"   Model: {model_name}")
-        print(f"   History entries: {len(history)}")
-        print(f"   Dataset: {dataset}")
-        if macs_context_present:
-            baseline_str = f"{baseline_macs:.3f}G" if baseline_macs is not None else "N/A"
-            target_str = f"{target_macs:.3f}G" if target_macs is not None else "N/A"
-            print(f"   MACs-first: baseline={baseline_str}, "
-                f"target={target_str}, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%")
-
+        # REMOVE THESE DUPLICATE LINES:
+        # macs_overshoot_tolerance_pct = float(state.get('macs_overshoot_tolerance_pct', 1.0))
+        # macs_undershoot_tolerance_pct = float(state.get('macs_undershoot_tolerance_pct', 5.0))
 
         try:
-            # Start from any master strategic guidance, then inject MACs context if available
-            strategic_guidance = (state.get('master_results', {}).get('strategic_guidance') or {}).copy()
-            if macs_context_present:
-                strategic_guidance.update({
-                    'baseline_macs': baseline_macs,
-                    'target_macs': target_macs,
-                    'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                    'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                })
-
-            # CREATE CNN LEARNING ANALYZER (like ViT has)
+            # 1. CREATE CNN LEARNING ANALYZER
             cnn_learning_analyzer = CNNLearningAnalyzer()
 
-            # DETECT LOCAL OPTIMUM TRAPS FOR CNN
-            local_optimum_trap = cnn_learning_analyzer._detect_cnn_local_optimum_trap(
-                history,
-                target_ratio,
-                dataset,
+            # 2. USE COMPREHENSIVE ANALYSIS FIRST
+            print(f"[📊] Running comprehensive CNN channel pattern analysis...")
+            comprehensive_analysis = cnn_learning_analyzer.analyze_cnn_channel_patterns(
+                history, target_ratio, dataset,
+                baseline_macs=baseline_macs,
+                target_macs=target_macs,
+                macs_overshoot_tolerance_pct=macs_overshoot_tolerance_pct,
+                macs_undershoot_tolerance_pct=macs_undershoot_tolerance_pct
             )
+
+            # 3. CHECK FOR LOCAL OPTIMUM
+            local_optimum_trap = cnn_learning_analyzer._detect_cnn_local_optimum_trap(
+                history, target_macs, dataset
+            )
+            
             if local_optimum_trap:
-                print(f"[🕳️] CNN Local optimum detected - generating escape strategy")
-                escape_strategy = cnn_learning_analyzer._generate_cnn_escape_strategy(local_optimum_trap, target_ratio)
-                # preserve MACs context inside escape guidance as well
-                if macs_context_present:
-                    escape_strategy.setdefault('strategic_guidance', {}).update({
-                        'baseline_macs': baseline_macs,
-                        'target_macs': target_macs,
-                        'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                        'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                    })
+                print(f"[🕳️] CNN Local optimum detected - using escape strategy")
+                escape_strategy = cnn_learning_analyzer._generate_cnn_escape_strategy(local_optimum_trap, target_macs)
                 return await self._llm_calculate_cnn_strategy_with_escape_guidance(
                     target_ratio, model_name, history, dataset, escape_strategy
                 )
 
+            # 4. HANDLE STRATEGIC GUIDANCE
+            strategic_guidance = state.get('master_results', {}).get('strategic_guidance')
+            
             if strategic_guidance:
+                # Inject MAC context and comprehensive analysis into strategic guidance
+                enhanced_guidance = dict(strategic_guidance)
+                enhanced_guidance.update({
+                    'baseline_macs': baseline_macs,
+                    'target_macs': target_macs,
+                    'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
+                    'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
+                    'comprehensive_analysis': comprehensive_analysis
+                })
+                
                 guidance_type = strategic_guidance.get('guidance_type')
-
+                
                 if guidance_type == 'high_accuracy_preservation':
-                    print(f"[🎯] HIGH-ACCURACY PRESERVATION MODE: Using tiny adjustment")
-                    accuracy_threshold = float(state.get('accuracy_threshold', 1.0))
-                    sg = dict(strategic_guidance)
-                    sg.update({
-                        'baseline_macs': baseline_macs,
-                        'target_macs': target_macs,
-                        'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                        'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                        'accuracy_threshold': accuracy_threshold,
-                    })
-                    strategy = await self._llm_calculate_cnn_strategy_with_guidance(
-                        target_ratio, model_name, history, dataset, sg
+                    print(f"[🎯] HIGH-ACCURACY PRESERVATION: Using enhanced learning with guidance")
+                    strategy = await self._llm_calculate_cnn_strategy_with_enhanced_learning(
+                        target_ratio, model_name, history, dataset, enhanced_guidance
                     )
-                    approach = "cnn_high_accuracy_preservation"
-
-
+                    approach = "cnn_high_accuracy_with_enhanced_learning"
+                    
                 elif guidance_type == 'catastrophic_recovery':
-                    print(f"[🚨] CATASTROPHIC RECOVERY MODE: Using strategic guidance")
-                    accuracy_threshold = float(state.get('accuracy_threshold', 1.0))
-                    sg = dict(strategic_guidance)
-                    sg.update({
-                        'baseline_macs': baseline_macs,
-                        'target_macs': target_macs,
-                        'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                        'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                        'accuracy_threshold': accuracy_threshold,
-                    })
+                    print(f"[🚨] CATASTROPHIC RECOVERY: Using enhanced learning with guidance")
                     strategy = await self._llm_calculate_cnn_strategy_with_enhanced_learning(
-                        target_ratio, model_name, history, dataset, sg
+                        target_ratio, model_name, history, dataset, enhanced_guidance
                     )
-                    approach = "cnn_catastrophic_recovery_with_guidance"
-
+                    approach = "cnn_catastrophic_recovery_with_enhanced_learning"
+                    
                 else:
-                    # Use enhanced learning with strategic guidance (MACs-aware)
-                    print(f"[📋] ENHANCED LEARNING with strategic guidance")
-                    accuracy_threshold = float(state.get('accuracy_threshold', 1.0))
-                    sg = dict(strategic_guidance)
-                    sg.update({
-                        'baseline_macs': baseline_macs,
-                        'target_macs': target_macs,
-                        'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                        'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                        'accuracy_threshold': accuracy_threshold,
-                    })
+                    print(f"[📋] GENERAL GUIDANCE: Using enhanced learning with strategic guidance")
                     strategy = await self._llm_calculate_cnn_strategy_with_enhanced_learning(
-                        target_ratio, model_name, history, dataset, sg
+                        target_ratio, model_name, history, dataset, enhanced_guidance
                     )
                     approach = "cnn_enhanced_learning_with_guidance"
 
             elif history:
-                # Use comprehensive CNN learning (MACs-aware path accepts None guidance too)
-                print(f"[📚] Using ENHANCED historical learning from {len(history)} previous attempts")
-                # Inject MACs context even when there was no strategic_guidance originally
-                sg = {'baseline_macs': baseline_macs, 'target_macs': target_macs,
+                print(f"[📚] Using enhanced historical learning with comprehensive analysis")
+                enhanced_guidance = {
+                    'baseline_macs': baseline_macs,
+                    'target_macs': target_macs,
                     'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
-                    'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct} if macs_context_present else None
+                    'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
+                    'comprehensive_analysis': comprehensive_analysis
+                }
                 strategy = await self._llm_calculate_cnn_strategy_with_enhanced_learning(
-                    target_ratio, model_name, history, dataset, sg
+                    target_ratio, model_name, history, dataset, enhanced_guidance
                 )
-                approach = "cnn_enhanced_historical_learning"
+                approach = "cnn_enhanced_historical_learning_with_analysis"
 
             else:
-                # First attempt
-                print(f"[🎯] First attempt - using baseline strategy")
-                # Baseline is ratio-based; MACs constraints (if any) will be considered in later loops
+                print(f"[🎯] First attempt - using enhanced baseline strategy")
                 strategy = await self._llm_calculate_cnn_strategy_baseline(
                     target_ratio, model_name, dataset
                 )
-                # Attach MACs context for downstream (so prune step can try to hit MACs)
-                if macs_context_present:
-                    strategy.setdefault('calculation_details', {})['mode'] = 'macs_first'
-                    strategy['baseline_macs'] = baseline_macs
-                    strategy['target_macs'] = target_macs
-                    strategy['macs_overshoot_tolerance_pct'] = macs_overshoot_tolerance_pct
-                    strategy['macs_undershoot_tolerance_pct'] = macs_undershoot_tolerance_pct
-                approach = "cnn_baseline_estimate"
+                approach = "cnn_enhanced_baseline"
 
-            # Check if this exact strategy was tried before
-            already_tried, previous_entry = self._is_cnn_strategy_already_tried(strategy, history, tolerance=0.02)
+            # 5. APPLY SAFETY VALIDATION WITH ERROR HANDLING
+            try:
+                from utils.enhancer import PruningSafetyValidator
+                safety_validator = PruningSafetyValidator()
+                
+                print(f"[🛡️] Applying safety validation to CNN strategy...")
+                validated_strategy = safety_validator.validate_and_correct(
+                    strategy, target_ratio, dataset, history,
+                    macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct
+                )
+            except Exception as safety_error:
+                print(f"[⚠️] Safety validation failed: {safety_error}, using original strategy")
+                validated_strategy = strategy
+
+            # 6. CHECK FOR REPETITION
+            already_tried, previous_entry = self._is_cnn_strategy_already_tried(validated_strategy, history, tolerance=0.02)
             if already_tried:
                 print(f"[🔄] CNN strategy already tried, requesting LLM variation")
-                strategy = await self._llm_create_cnn_strategy_variation(
-                    strategy, previous_entry, target_ratio, model_name, dataset
+                validated_strategy = await self._llm_create_cnn_strategy_variation(
+                    validated_strategy, previous_entry, target_ratio, model_name, dataset
                 )
                 approach += "_with_variation"
 
-            # Add metadata
-            strategy.update({
+            # 7. ADD COMPREHENSIVE METADATA
+            validated_strategy.update({
                 "approach": approach,
                 "llm_calculated": True,
                 "fully_llm_driven": True,
+                "comprehensive_analysis_used": True,
+                "safety_validated": True,
                 "enhanced_learning_applied": True,
                 "revision": current_revision,
                 "dataset": dataset,
                 "model_name": model_name,
                 "history_count": len(history),
+                "baseline_macs": baseline_macs,
+                "target_macs": target_macs,
+                "macs_overshoot_tolerance_pct": macs_overshoot_tolerance_pct,
+                "macs_undershoot_tolerance_pct": macs_undershoot_tolerance_pct,
             })
-            if macs_context_present:
-                strategy["baseline_macs"] = baseline_macs
-                strategy["target_macs"] = target_macs
-                strategy['macs_overshoot_tolerance_pct'] = macs_overshoot_tolerance_pct
-                strategy['macs_undershoot_tolerance_pct'] = macs_undershoot_tolerance_pct
 
             print(f"[✅] Enhanced CNN strategy complete: {approach}")
-            return strategy
+            return validated_strategy
 
         except Exception as e:
-            dataset = state.get('dataset', 'cifar10')
             print(f"[❌] Enhanced CNN strategy generation failed: {e}")
-            print(f"[🔄] Using emergency fallback")
-
-            # Emergency fallback
             return self._create_emergency_cnn_fallback_strategy(target_ratio, model_name, dataset, str(e))
+
 
     async def _llm_calculate_cnn_strategy_with_enhanced_learning(
         self,
