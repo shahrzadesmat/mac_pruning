@@ -1048,7 +1048,7 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
                               checkpoint_dir: str = "./checkpoints"):
     """Enhanced workflow runner with ImageNet subset support"""
     global GLOBAL_STATE, MODEL_STORE
-    if 'macs_target_g' in (state_mods or {}):
+    if 'target_macs' in (state_mods or {}):
         # MACs-first mode - don't use ratio extraction
         pruning_ratio = None  # Will be calculated from MACs later
     elif 'macs_target_ratio' in (state_mods or {}):

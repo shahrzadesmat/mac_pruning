@@ -482,7 +482,7 @@ class PruningAgent:
             if target_ratio is None:
                 target_ratio = analysis_results.get("suggested_pruning_ratio")
                 if target_ratio is None:
-                    target_ratio = state.get("target_pruning_ratio", 0.2)
+                    target_ratio = state.get("target_pruning_ratio")
 
             
             # Get base MACs to calculate target
@@ -908,10 +908,13 @@ class PruningAgent:
         num_classes = state.get("num_classes", 10)
         input_size = state.get("input_size", 224)
         data_path = state.get("data_path", "./data")
-        target_ratio = state.get("target_pruning_ratio", 0.2)
+        target_ratio = state.get("target_pruning_ratio")
         
         print(f"[🔧] Enhanced CNN Pruning: {model_name} on {dataset}")
-        print(f"[🎯] Target PARAMETER reduction: {target_ratio*100:.1f}%")
+        if target_ratio is not None:
+            print(f"[🎯] Target PARAMETER reduction: {target_ratio*100:.1f}%")
+        else:
+            print(f"[🎯] MAC-first mode: Target parameter reduction will be derived from MAC constraints")
         
         # Get analysis results from Analysis Agent (with historical learning)
         analysis_results = state.get("analysis_results", {})
@@ -928,10 +931,14 @@ class PruningAgent:
             print(f"[✅] This includes historical learning corrections")
         else:
             # Simple conservative fallback - let Analysis Agent learn the real relationship
-            channel_pruning_ratio = target_ratio * 0.8  # Conservative starting point
-            print(f"[⚠️] No learned ratio - using conservative starting point: {channel_pruning_ratio:.4f}")
-            print(f"[🧠] Analysis Agent will learn actual {model_name} relationship from results")
-        
+            if target_ratio is not None:
+                channel_pruning_ratio = target_ratio * 0.8  # Conservative starting point
+                print(f"[⚠️] No learned ratio - using conservative starting point: {channel_pruning_ratio:.4f}")
+            else:
+                # MAC-first mode fallback
+                channel_pruning_ratio = 0.3  # Conservative default for MAC-first mode
+                print(f"[⚠️] MAC-first mode - using conservative fallback: {channel_pruning_ratio:.4f}")
+            print(f"[🧠] Analysis Agent will learn actual {model_name} relationship from results")        
         print(f"[🧮] Using Analysis Agent parameters:")
         print(f"   Channel ratio: {channel_pruning_ratio:.4f}")
         print(f"   Round_to: {suggested_round_to}")
@@ -1014,15 +1021,23 @@ class PruningAgent:
             print(f"[📊] CNN Pruning Results:")
             print(f"  - Original: {original_params:,} params")
             print(f"  - Final: {final_params:,} params")
-            print(f"  - Target reduction: {target_ratio*100:.2f}%")
-            print(f"  - Achieved reduction: {achieved_ratio*100:.2f}%")
-            print(f"  - Difference: {abs(achieved_ratio - target_ratio)*100:.2f}%")
             
-            # Success check
-            tolerance = 0.02
-            ratio_diff = achieved_ratio - target_ratio
-            success = (0 <= ratio_diff <= tolerance) or (-0.01 <= ratio_diff < 0)
-            print(f"  - Meets target (≤{tolerance*100:.0f}% overshoot): {success}")
+            print(f"  - Achieved reduction: {achieved_ratio*100:.2f}%")
+
+            if target_ratio is not None:
+                print(f"  - Target reduction: {target_ratio*100:.2f}%")
+                print(f"  - Difference: {abs(achieved_ratio - target_ratio)*100:.2f}%")
+            
+                # Success check
+                tolerance = 0.02
+                ratio_diff = achieved_ratio - target_ratio
+                success = (0 <= ratio_diff <= tolerance) or (-0.01 <= ratio_diff < 0)
+                print(f"  - Meets target (≤{tolerance*100:.0f}% overshoot): {success}")
+            else:
+                # MAC-first mode - success determined by MAC constraints elsewhere
+                print(f"  - MAC-first mode: Target reduction derived from MAC constraints")
+                print(f"  - Achieved reduction: {achieved_ratio*100:.2f}%")
+                success = True  # Will be determined by MAC tolerance in routing logic
             
             # Evaluate and log accuracy (but don't make decisions based on it)
             evaluation_result = self._evaluate_model(model, val_loader, device, dataset)

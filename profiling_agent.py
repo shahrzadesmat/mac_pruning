@@ -175,6 +175,8 @@ class ProfilingAgent:
             # Set measured baseline if it wasn't provided
             if original_baseline_macs is None:
                 measured_baseline_macs = layer_macs
+                baseline_macs_for_calc = layer_macs
+                print(f"[✅] Measured baseline MACs from ptflops: {baseline_macs_for_calc/1e9:.3f}G")
                 print(f"[✅] Measured baseline MACs from layers: {measured_baseline_macs/1e9:.3f}G")
 
             mac_distribution = {

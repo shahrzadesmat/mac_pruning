@@ -133,13 +133,19 @@ class AnalysisAgent:
         """CLEANED: Enhanced analysis with LLM-based approach only (MACs-aware)"""
         
         dataset = state.get('dataset', 'cifar10')
-        target_ratio = state.get('target_pruning_ratio', 0.2)
         model_name = state.get('model_name', 'unknown')
 
-        # (NEW) Optional MACs-first context pulled from state/master guidance if present
         sg = state.get('master_results', {}).get('strategic_guidance', {}) or {}
         baseline_macs = state.get('baseline_macs', sg.get('baseline_macs'))
         target_macs = state.get('target_macs', sg.get('target_macs'))
+
+        target_ratio = state.get('target_pruning_ratio')
+        if target_ratio is None and baseline_macs and target_macs:
+            target_ratio = (baseline_macs - target_macs) / baseline_macs
+            print(f"[🔧] Calculated target ratio from MACs: {target_ratio:.3f} ({target_ratio*100:.1f}%)")
+        elif target_ratio is None:
+            raise ValueError("No target_pruning_ratio provided and no MAC targets available to calculate ratio")
+
         macs_overshoot_tolerance_pct = float(state.get('macs_overshoot_tolerance_pct', sg.get('macs_overshoot_tolerance_pct', 1.0)))
         macs_undershoot_tolerance_pct = float(state.get('macs_undershoot_tolerance_pct', sg.get('macs_undershoot_tolerance_pct', 5.0)))
 
@@ -268,49 +274,40 @@ class AnalysisAgent:
         # Generate bidirectional guidance
         if mac_overshoot_count > mac_undershoot_count:
             guidance = f"""
-    🚨 CRITICAL DIRECTION ANALYSIS - MAC OVERSHOOT DOMINANT:
-    ========================================================
-    - {mac_overshoot_count}/{len(history)} attempts caused MAC OVERSHOOT (achieved > target)
-    - This means previous multipliers were TOO LOW (insufficient pruning)
-    - SOLUTION: Use SIGNIFICANTLY HIGHER multipliers (2x-5x higher than previous attempts)
-    - AVOID: Multipliers below 0.5 for MLP or 0.3 for QKV - these cause insufficient pruning
-
-    🚫 DANGEROUS UNDERPRUNING ZONES (AVOID THESE RANGES):
-    """
+        🚨 CRITICAL DIRECTION ANALYSIS - MAC OVERSHOOT DOMINANT:
+        ...
+        🚫 DANGEROUS UNDERPRUNING ZONES (AVOID THESE RANGES):
+        """
             for i, zone in enumerate(dangerous_overshoot_zones[:5]):  # Show top 5
                 mlp_min, mlp_max = zone['mlp_range']
                 qkv_min, qkv_max = zone['qkv_range']
                 guidance += f"""
-    Zone {i+1}: mlp_multiplier {mlp_min:.3f}-{mlp_max:.3f}, qkv_multiplier {qkv_min:.3f}-{qkv_max:.3f}
-    Reason: {zone['reason']}"""
+        Zone {i+1}: mlp_multiplier {mlp_min:.3f}-{mlp_max:.3f}, qkv_multiplier {qkv_min:.3f}-{qkv_max:.3f}
+        Reason: {zone['reason']}"""
 
         elif mac_undershoot_count > mac_overshoot_count:
             guidance = f"""
-    🚨 CRITICAL DIRECTION ANALYSIS - MAC UNDERSHOOT DOMINANT:
-    =========================================================
-    - {mac_undershoot_count}/{len(history)} attempts caused MAC UNDERSHOOT (achieved < target)
-    - This means previous multipliers were TOO HIGH (excessive pruning)  
-    - SOLUTION: Use SIGNIFICANTLY LOWER multipliers (0.3x-0.7x lower than previous attempts)
-    - AVOID: Multipliers above 2.0 for MLP or 1.5 for QKV - these cause excessive pruning
-
-    🚫 DANGEROUS OVERPRUNING ZONES (AVOID THESE RANGES):
-    """
+        🚨 CRITICAL DIRECTION ANALYSIS - MAC UNDERSHOOT DOMINANT:
+        ...
+        🚫 DANGEROUS OVERPRUNING ZONES (AVOID THESE RANGES):
+        """
             for i, zone in enumerate(dangerous_undershoot_zones[:5]):  # Show top 5
-                mlp_min, mlp_max = zone['mlp_range'] 
+                mlp_min, mlp_max = zone['mlp_range']
                 qkv_min, qkv_max = zone['qkv_range']
                 guidance += f"""
-    Zone {i+1}: mlp_multiplier {mlp_min:.3f}-{mlp_max:.3f}, qkv_multiplier {qkv_min:.3f}-{qkv_max:.3f}
-    Reason: {zone['reason']}"""
-        
-        else:
-            guidance = f"""
-    🚨 CRITICAL DIRECTION ANALYSIS - MIXED PATTERN:
-    ==============================================
-    - Mixed failure pattern: {mac_overshoot_count} overshoot, {mac_undershoot_count} undershoot
-    - Previous multipliers show inconsistent results
-    - SOLUTION: Use systematic approach with moderate multipliers
-    - FOCUS: Find optimal balance between over/under-shooting attempts
-    """
+        Zone {i+1}: mlp_multiplier {mlp_min:.3f}-{mlp_max:.3f}, qkv_multiplier {qkv_min:.3f}-{qkv_max:.3f}
+        Reason: {zone['reason']}"""
+
+            
+            else:
+                guidance = f"""
+        🚨 CRITICAL DIRECTION ANALYSIS - MIXED PATTERN:
+        ==============================================
+        - Mixed failure pattern: {mac_overshoot_count} overshoot, {mac_undershoot_count} undershoot
+        - Previous multipliers show inconsistent results
+        - SOLUTION: Use systematic approach with moderate multipliers
+        - FOCUS: Find optimal balance between over/under-shooting attempts
+        """
 
         return guidance
 
@@ -331,9 +328,8 @@ class AnalysisAgent:
             return v / 1e9 if v > 1e6 else v
 
         dataset = state.get('dataset', 'cifar10')
-        target_ratio = state.get('target_pruning_ratio', 0.2)
-        history = state.get('history', [])
-        current_revision = state.get('revision_number', 0)
+        target_ratio = state.get('target_pruning_ratio')
+
 
         # Pull MACs-first context from state (or master_results->strategic_guidance) if present
         baseline_macs_raw = (
@@ -357,7 +353,17 @@ class AnalysisAgent:
 
         baseline_macs = _to_g(baseline_macs_raw)
         target_macs = _to_g(target_macs_raw)
+
+
         macs_context_present = target_macs is not None
+        if target_ratio is None and baseline_macs and target_macs:
+            target_ratio = (baseline_macs - target_macs) / baseline_macs
+            print(f"[🔧] Calculated target ratio from MACs: {target_ratio:.3f} ({target_ratio*100:.1f}%)")
+        elif target_ratio is None:
+            raise ValueError("No target_pruning_ratio provided and no MAC targets available to calculate ratio")
+        history = state.get('history', [])
+        current_revision = state.get('revision_number', 0)
+
 
         print(f"[🧠] Enhanced CNN Analysis with Historical Learning:")
         print(f"   Target (ratio fallback): {target_ratio:.3f}")
@@ -524,7 +530,6 @@ class AnalysisAgent:
             # Emergency fallback
             return self._create_emergency_cnn_fallback_strategy(target_ratio, model_name, dataset, str(e))
 
-
     async def _llm_calculate_cnn_strategy_with_enhanced_learning(
         self,
         target_ratio,
@@ -532,7 +537,7 @@ class AnalysisAgent:
         history,
         dataset,
         strategic_guidance=None,
-    ):
+        ):
         """
         Enhanced CNN learning method using CNNLearningAnalyzer
         MACs-first: if baseline/target MACs are provided in strategic_guidance, steer the LLM to hit them within tolerance.
@@ -613,6 +618,7 @@ class AnalysisAgent:
 
             strategy_dict = parse_llm_json_response(response.content)
 
+            # Check if LLM provided channel_pruning_ratio
             if strategy_dict and "channel_pruning_ratio" in strategy_dict:
                 channel_ratio = strategy_dict.get("channel_pruning_ratio", 0.0)
                 confidence = strategy_dict.get("confidence_level", "unknown")
@@ -629,8 +635,8 @@ class AnalysisAgent:
                     print("   Key insights:")
                     for insight in insights:
                         print(f"     - {insight}")
-
-                # Attach metadata + MACs context for downstream consumers
+                
+                # Attach metadata for success path
                 strategy_dict["enhanced_learning_used"] = True
                 strategy_dict["historical_analysis_applied"] = True
                 if target_macs is not None:
@@ -639,11 +645,45 @@ class AnalysisAgent:
                     strategy_dict["macs_overshoot_tolerance_pct"] = macs_overshoot_tolerance_pct
                     strategy_dict["macs_undershoot_tolerance_pct"] = macs_undershoot_tolerance_pct
                     strategy_dict.setdefault("calculation_details", {})["mode"] = "macs_first"
+                
+                return strategy_dict
+                
+            elif strategy_dict:
+                # LLM didn't provide channel_pruning_ratio, but we have other data
+                print(f"[⚠️] LLM response missing channel_pruning_ratio, calculating from MAC constraints")
+                
+                # Calculate channel ratio from MAC-derived target ratio
+                if target_macs is not None and baseline_macs is not None:
+                    mac_derived_ratio = (baseline_macs - target_macs) / baseline_macs
+                    channel_ratio = mac_derived_ratio  # Use the full MAC-derived ratio
+                    strategy_dict["channel_pruning_ratio"] = channel_ratio
+                    print(f"[🔧] Calculated channel ratio from MACs: {channel_ratio:.3f}")
+                else:
+                    # Final fallback
+                    channel_ratio = 0.3
+                    strategy_dict["channel_pruning_ratio"] = channel_ratio
+                    print(f"[⚠️] Using conservative fallback channel ratio: {channel_ratio:.3f}")
+                
+                print(f"[🧠] Enhanced CNN LLM learning results:")
+                print(f"   Channel ratio: {channel_ratio:.3f} (calculated)")
+                print(f"   Importance: {strategy_dict.get('importance_criterion', 'unknown')}")
+                print(f"   Round-to: {strategy_dict.get('round_to', 'unknown')}")
 
+                # Attach metadata for fallback path
+                strategy_dict["enhanced_learning_used"] = True
+                strategy_dict["historical_analysis_applied"] = True
+                if target_macs is not None:
+                    strategy_dict["baseline_macs"] = baseline_macs
+                    strategy_dict["target_macs"] = target_macs
+                    strategy_dict["macs_overshoot_tolerance_pct"] = macs_overshoot_tolerance_pct
+                    strategy_dict["macs_undershoot_tolerance_pct"] = macs_undershoot_tolerance_pct
+                    strategy_dict.setdefault("calculation_details", {})["mode"] = "macs_first"
+                
                 return strategy_dict
 
-            print("[⚠️] Enhanced CNN learning LLM failed to provide valid strategy")
-            raise ValueError("Enhanced CNN learning strategy parsing failed")
+            else:
+                print(f"[❌] LLM response parsing failed completely")
+                raise ValueError("Enhanced CNN learning strategy parsing failed")
 
         except Exception as e:
             print(f"[❌] Enhanced CNN learning LLM failed: {e}")
@@ -652,7 +692,6 @@ class AnalysisAgent:
             return await self._llm_calculate_full_strategy_with_history(
                 target_ratio, model_name, history, dataset
             )
-
 
     # ADD: CNN escape guidance handler
     async def _llm_calculate_cnn_strategy_with_escape_guidance(self, target_ratio, model_name, history, dataset, escape_guidance):
@@ -669,33 +708,33 @@ class AnalysisAgent:
 
         prompt = f"""You are a CNN pruning expert helping escape a local optimum trap.
 
-SITUATION: Found excellent CNN result but small adjustments cause catastrophic failure.
+        SITUATION: Found excellent CNN result but small adjustments cause catastrophic failure.
 
-EXCELLENT BASELINE:
-- Accuracy: {excellent_baseline['accuracy']:.2f}%
-- Channel ratio: {excellent_baseline['working_channel_ratio']:.3f}
-- Achieved: {excellent_baseline['achieved_ratio']*100:.2f}% reduction
+        EXCELLENT BASELINE:
+        - Accuracy: {excellent_baseline['accuracy']:.2f}%
+        - Channel ratio: {excellent_baseline['working_channel_ratio']:.3f}
+        - Achieved: {excellent_baseline['achieved_ratio']*100:.2f}% reduction
 
-ESCAPE STRATEGY: Try meaningfully different approaches, not micro-adjustments
+        ESCAPE STRATEGY: Try meaningfully different approaches, not micro-adjustments
 
-EXPLORATION DIRECTIONS:
-{chr(10).join(f"- {direction['direction']}: {direction['rationale']}" for direction in exploration_directions)}
+        EXPLORATION DIRECTIONS:
+        {chr(10).join(f"- {direction['direction']}: {direction['rationale']}" for direction in exploration_directions)}
 
-FORBIDDEN ACTIONS:
-{chr(10).join(f"- {action}" for action in forbidden_actions)}
+        FORBIDDEN ACTIONS:
+        {chr(10).join(f"- {action}" for action in forbidden_actions)}
 
-Calculate NEW channel ratio significantly different from {excellent_baseline['working_channel_ratio']:.3f}
+        Calculate NEW channel ratio significantly different from {excellent_baseline['working_channel_ratio']:.3f}
 
-OUTPUT FORMAT (JSON only):
-{{
-    "channel_pruning_ratio": YOUR_DIVERSIFIED_VALUE,
-    "importance_criterion": "taylor|l1norm|l2norm", 
-    "round_to": X,
-    "global_pruning": true,
-    "rationale": "ESCAPE STRATEGY: Avoiding local optimum by trying [direction] with channel_ratio=[value] because [reasoning]. This is meaningfully different from excellent baseline {excellent_baseline['working_channel_ratio']:.3f}.",
-    "architecture_type": "cnn",
-    "escape_strategy_applied": true
-}}"""
+        OUTPUT FORMAT (JSON only):
+        {{
+            "channel_pruning_ratio": YOUR_DIVERSIFIED_VALUE,
+            "importance_criterion": "taylor|l1norm|l2norm", 
+            "round_to": X,
+            "global_pruning": true,
+            "rationale": "ESCAPE STRATEGY: Avoiding local optimum by trying [direction] with channel_ratio=[value] because [reasoning]. This is meaningfully different from excellent baseline {excellent_baseline['working_channel_ratio']:.3f}.",
+            "architecture_type": "cnn",
+            "escape_strategy_applied": true
+        }}"""
 
         # Execute LLM call for escape strategy
         response = await self.llm.ainvoke([
@@ -752,34 +791,34 @@ OUTPUT FORMAT (JSON only):
         
         prompt = f"""You are a CNN pruning expert creating a variation of a strategy that was already tried.
 
-SITUATION: The original CNN strategy was already attempted and needs adjustment.
+        SITUATION: The original CNN strategy was already attempted and needs adjustment.
 
-ORIGINAL STRATEGY:
-- Channel ratio: {original_channel:.4f}
-- Importance: {original_strategy.get('importance_criterion', 'unknown')}
-- Round-to: {original_strategy.get('round_to', 'unknown')}
+        ORIGINAL STRATEGY:
+        - Channel ratio: {original_channel:.4f}
+        - Importance: {original_strategy.get('importance_criterion', 'unknown')}
+        - Round-to: {original_strategy.get('round_to', 'unknown')}
 
-PREVIOUS RESULT:
-- Achieved: {previous_achieved*100:.1f}% parameter reduction
-- Target: {target_ratio*100:.1f}% parameter reduction
+        PREVIOUS RESULT:
+        - Achieved: {previous_achieved*100:.1f}% parameter reduction
+        - Target: {target_ratio*100:.1f}% parameter reduction
 
-TASK: Create a modified CNN strategy that will get closer to the {target_ratio*100:.1f}% target.
+        TASK: Create a modified CNN strategy that will get closer to the {target_ratio*100:.1f}% target.
 
-ANALYSIS:
-- If previous overshoot: Reduce channel ratio
-- If previous undersoot: Increase channel ratio  
-- Consider changing importance criterion or round_to if needed
-- Make smart adjustments based on {model_name} characteristics
+        ANALYSIS:
+        - If previous overshoot: Reduce channel ratio
+        - If previous undersoot: Increase channel ratio  
+        - Consider changing importance criterion or round_to if needed
+        - Make smart adjustments based on {model_name} characteristics
 
-OUTPUT FORMAT (JSON only):
-{{
-    "channel_pruning_ratio": YOUR_ADJUSTED_VALUE,
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "round_to": X,
-    "global_pruning": true,
-    "rationale": "CNN variation strategy: explain the adjustments made and why",
-    "architecture_type": "cnn"
-}}"""
+        OUTPUT FORMAT (JSON only):
+        {{
+            "channel_pruning_ratio": YOUR_ADJUSTED_VALUE,
+            "importance_criterion": "taylor|l1norm|l2norm",
+            "round_to": X,
+            "global_pruning": true,
+            "rationale": "CNN variation strategy: explain the adjustments made and why",
+            "architecture_type": "cnn"
+        }}"""
 
         try:
             response = await self.llm.ainvoke([
@@ -839,36 +878,36 @@ OUTPUT FORMAT (JSON only):
         
         prompt = f"""You are an expert in CNN pruning for {model_name} on {dataset}.
 
-TASK: Determine the baseline CNN channel pruning strategy to achieve {target_ratio*100:.0f}% parameter reduction.
+        TASK: Determine the baseline CNN channel pruning strategy to achieve {target_ratio*100:.0f}% parameter reduction.
 
-This is the FIRST ATTEMPT - you have no historical data to learn from.
-Make your best educated guess based on CNN architecture knowledge.
+        This is the FIRST ATTEMPT - you have no historical data to learn from.
+        Make your best educated guess based on CNN architecture knowledge.
 
-CNN ARCHITECTURE ANALYSIS FOR {model_name.upper()}:
-- ResNets: Have skip connections and bottleneck blocks that amplify pruning effects
-- ConvNets: Use standard convolutions that scale more linearly with channel pruning
-- Different architectures respond differently to channel pruning ratios
+        CNN ARCHITECTURE ANALYSIS FOR {model_name.upper()}:
+        - ResNets: Have skip connections and bottleneck blocks that amplify pruning effects
+        - ConvNets: Use standard convolutions that scale more linearly with channel pruning
+        - Different architectures respond differently to channel pruning ratios
 
-DATASET REQUIREMENTS ({dataset.upper()}):
-- ImageNet: 1000 classes, complex features, need accuracy preservation
-- CIFAR-10: 10 classes, simpler features, can be more aggressive
+        DATASET REQUIREMENTS ({dataset.upper()}):
+        - ImageNet: 1000 classes, complex features, need accuracy preservation
+        - CIFAR-10: 10 classes, simpler features, can be more aggressive
 
-BASELINE STRATEGY GUIDELINES:
-- Start conservatively to avoid catastrophic accuracy loss
-- Channel ratio controls aggressiveness of pruning
-- Consider architecture-specific sensitivities
+        BASELINE STRATEGY GUIDELINES:
+        - Start conservatively to avoid catastrophic accuracy loss
+        - Channel ratio controls aggressiveness of pruning
+        - Consider architecture-specific sensitivities
 
-OUTPUT FORMAT (JSON only):
-{{
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "channel_pruning_ratio": YOUR_CONSERVATIVE_ESTIMATE,
-    "round_to": X,
-    "global_pruning": true,
-    "rationale": "Baseline CNN strategy for {model_name} on {dataset}: Using conservative channel ratio to target {target_ratio*100:.0f}% reduction while preserving accuracy. Channel ratio chosen because [reasoning], importance chosen because [reasoning].",
-    "architecture_type": "cnn"
-}}
+        OUTPUT FORMAT (JSON only):
+        {{
+            "importance_criterion": "taylor|l1norm|l2norm",
+            "channel_pruning_ratio": YOUR_CONSERVATIVE_ESTIMATE,
+            "round_to": X,
+            "global_pruning": true,
+            "rationale": "Baseline CNN strategy for {model_name} on {dataset}: Using conservative channel ratio to target {target_ratio*100:.0f}% reduction while preserving accuracy. Channel ratio chosen because [reasoning], importance chosen because [reasoning].",
+            "architecture_type": "cnn"
+        }}
 
-CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is likely to achieve the target without catastrophic failure."""
+        CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is likely to achieve the target without catastrophic failure."""
 
         try:
             response = await self.llm.ainvoke([
@@ -961,7 +1000,7 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         history,
         dataset,
         strategic_guidance,
-    ):
+        ):
         """
         Use LLM to calculate CNN strategy based on Master Agent's strategic guidance.
         MACs-first: if target MACs are provided in strategic_guidance, aim to hit them within tolerance.
@@ -999,12 +1038,12 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         avoided_combinations_text = ""
         if avoid_combinations:
             avoided_combinations_text = f"""
-    🚨 ABSOLUTELY FORBIDDEN COMBINATIONS - DO NOT USE THESE:
-    {chr(10).join(f"❌ importance_criterion='{combo[0]}', round_to={combo[1]} - CAUSED CATASTROPHIC FAILURE" for combo in avoid_combinations)}
+        🚨 ABSOLUTELY FORBIDDEN COMBINATIONS - DO NOT USE THESE:
+        {chr(10).join(f"❌ importance_criterion='{combo[0]}', round_to={combo[1]} - CAUSED CATASTROPHIC FAILURE" for combo in avoid_combinations)}
 
-    IF YOU CHOOSE ANY OF THESE COMBINATIONS, THE SYSTEM WILL FAIL.
-    YOU MUST CHOOSE DIFFERENT VALUES FOR BOTH importance_criterion AND round_to.
-    """
+        IF YOU CHOOSE ANY OF THESE COMBINATIONS, THE SYSTEM WILL FAIL.
+        YOU MUST CHOOSE DIFFERENT VALUES FOR BOTH importance_criterion AND round_to.
+        """
 
         macs_line = ""
         if target_macs is not None:
@@ -1019,80 +1058,80 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
             )
 
         guidance_text = f"""
-    🚨 CATASTROPHIC RECOVERY - STRATEGIC GUIDANCE FROM MASTER AGENT 🚨
-    ================================================================
-    CRITICAL SITUATION: Previous parameter combinations have repeatedly failed to meet target.{macs_line}
+        🚨 CATASTROPHIC RECOVERY - STRATEGIC GUIDANCE FROM MASTER AGENT 🚨
+        ================================================================
+        CRITICAL SITUATION: Previous parameter combinations have repeatedly failed to meet target.{macs_line}
 
-    {avoided_combinations_text}
+        {avoided_combinations_text}
 
-    STRATEGIC RECOMMENDATIONS FROM MASTER AGENT:
-    {chr(10).join(f"- {rec}" for rec in recommendations)}
+        STRATEGIC RECOMMENDATIONS FROM MASTER AGENT:
+        {chr(10).join(f"- {rec}" for rec in recommendations)}
 
-    FAILURE ANALYSIS:
-    {chr(10).join(f"- {key}: {value}" for key, value in failure_analysis.items()) if failure_analysis else "No specific failure patterns identified"}
+        FAILURE ANALYSIS:
+        {chr(10).join(f"- {key}: {value}" for key, value in failure_analysis.items()) if failure_analysis else "No specific failure patterns identified"}
 
-    ACCEPTABLE PARAMETER-REDUCTION RANGE (fallback if MACs target not provided):
-    - Minimum acceptable: {acceptable_range.get('min_acceptable', target_ratio)*100:.1f}%
-    - Maximum acceptable: {acceptable_range.get('max_acceptable', target_ratio + 0.02)*100:.1f}%
-    - ANY undershoot is catastrophic in ratio-mode; prefer slight overshoot only when MACs target is absent.
-    ================================================================
-    """
+        ACCEPTABLE PARAMETER-REDUCTION RANGE (fallback if MACs target not provided):
+        - Minimum acceptable: {acceptable_range.get('min_acceptable', target_ratio)*100:.1f}%
+        - Maximum acceptable: {acceptable_range.get('max_acceptable', target_ratio + 0.02)*100:.1f}%
+        - ANY undershoot is catastrophic in ratio-mode; prefer slight overshoot only when MACs target is absent.
+        ================================================================
+        """
 
         # ---------- Prompt (MACs-first primary, ratio as fallback) ----------
         prompt = f"""You are an expert Analysis Agent in CNN pruning for {model_name} on {dataset}.
 
-    {guidance_text}
+        {guidance_text}
 
-    {history_analysis}
+        {history_analysis}
 
-    🧠 CHANNEL RATIO → OUTCOME UNDERSTANDING:
-    For CNN models, channel_pruning_ratio controls aggressiveness:
-    - HIGHER ratios = MORE aggressive pruning = HIGHER parameter reduction & LOWER MACs (compute) but ACCURACY risk
-    - LOWER ratios = LESS aggressive pruning = LOWER parameter reduction & HIGHER MACs (compute) but safer
+        🧠 CHANNEL RATIO → OUTCOME UNDERSTANDING:
+        For CNN models, channel_pruning_ratio controls aggressiveness:
+        - HIGHER ratios = MORE aggressive pruning = HIGHER parameter reduction & LOWER MACs (compute) but ACCURACY risk
+        - LOWER ratios = LESS aggressive pruning = LOWER parameter reduction & HIGHER MACs (compute) but safer
 
-    🎯 YOUR ENHANCED TASK (OPTIMIZE 3 PARAMETERS):
-    1) CHANNEL_PRUNING_RATIO  — primary control to reach the compute budget (MACs-first). If no MACs target is given, match parameter reduction target.
-    2) IMPORTANCE_CRITERION   — secondary control for accuracy preservation
-    3) ROUND_TO               — fine-tuning for accuracy/hardware alignment
+        🎯 YOUR ENHANCED TASK (OPTIMIZE 3 PARAMETERS):
+        1) CHANNEL_PRUNING_RATIO  — primary control to reach the compute budget (MACs-first). If no MACs target is given, match parameter reduction target.
+        2) IMPORTANCE_CRITERION   — secondary control for accuracy preservation
+        3) ROUND_TO               — fine-tuning for accuracy/hardware alignment
 
-    PARAMETER LEARNING STRATEGY:
-    - If the same channel_ratio produced a consistent MACs or reduction, compute a NEW ratio mathematically.
-    - MACs-first when a target is provided: adjust ratio such that achieved MACs fall within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% of the target.
-    - Fallback (no MACs target): new_ratio = old_ratio × (target_reduction / achieved_reduction)
+        PARAMETER LEARNING STRATEGY:
+        - If the same channel_ratio produced a consistent MACs or reduction, compute a NEW ratio mathematically.
+        - MACs-first when a target is provided: adjust ratio such that achieved MACs fall within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% of the target.
+        - Fallback (no MACs target): new_ratio = old_ratio × (target_reduction / achieved_reduction)
 
-    🚨 CRITICAL ENFORCEMENT RULES:
-    1) DO NOT use any forbidden (importance_criterion, round_to) combinations above.
-    2) You MAY vary channel_pruning_ratio — do not reuse the same failing value.
-    3) If MACs target is present, you MUST propose a ratio that hits the MACs tolerance band.
+        🚨 CRITICAL ENFORCEMENT RULES:
+        1) DO NOT use any forbidden (importance_criterion, round_to) combinations above.
+        2) You MAY vary channel_pruning_ratio — do not reuse the same failing value.
+        3) If MACs target is present, you MUST propose a ratio that hits the MACs tolerance band.
 
-    PARAMETER OPTIONS (examples, not limits):
-    - channel_pruning_ratio: 0.10, 0.12, 0.15, 0.17, 0.19, 0.20, 0.22, 0.25
-    - importance_criterion: "taylor", "l1norm", "l2norm"
-    - round_to: 1, 2, 4, 8, 16
+        PARAMETER OPTIONS (examples, not limits):
+        - channel_pruning_ratio: 0.10, 0.12, 0.15, 0.17, 0.19, 0.20, 0.22, 0.25
+        - importance_criterion: "taylor", "l1norm", "l2norm"
+        - round_to: 1, 2, 4, 8, 16
 
-    OUTPUT FORMAT (JSON only):
-    {{
-    "channel_pruning_ratio": YOUR_CALCULATED_VALUE,
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "round_to": X,
-    "global_pruning": true,
-    "parameter_tuning_order": ["channel_pruning_ratio", "importance_criterion", "round_to"],
-    "rationale": "MACs-first if available: baseline={baseline_macs if baseline_macs is not None else 'N/A'}G, target={target_macs if target_macs is not None else 'N/A'}G, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%. If MACs not provided, use ratio target {target_ratio*100:.1f}%. Explain how history informed the new ratio.",    "architecture_type": "cnn",
-    "calculation_details": {{
-        "mode": "{'macs_first' if target_macs is not None else 'ratio_fallback'}",
-        "historical_pattern": "channel_ratio=X → achieved MACs/ratio = Y",
-        "macs_target_g": {"null" if target_macs is None else f"{target_macs:.3f}"},
-        "macs_overshoot_tolerance_pct": {macs_overshoot_tolerance_pct:.2f},
-        "macs_undershoot_tolerance_pct": {macs_undershoot_tolerance_pct:.2f},
-        "math": "If MACs target present: choose ratio to land within tolerance; else new_ratio = old_ratio × (target/achieved)",
-        "forbidden_check_passed": true
-    }}
-    }}
+        OUTPUT FORMAT (JSON only):
+        {{
+        "channel_pruning_ratio": YOUR_CALCULATED_VALUE,
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["channel_pruning_ratio", "importance_criterion", "round_to"],
+        "rationale": "MACs-first if available: baseline={baseline_macs if baseline_macs is not None else 'N/A'}G, target={target_macs if target_macs is not None else 'N/A'}G, tol=+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%. If MACs not provided, use ratio target {target_ratio*100:.1f}%. Explain how history informed the new ratio.",    "architecture_type": "cnn",
+        "calculation_details": {{
+            "mode": "{'macs_first' if target_macs is not None else 'ratio_fallback'}",
+            "historical_pattern": "channel_ratio=X → achieved MACs/ratio = Y",
+            "macs_target_g": {"null" if target_macs is None else f"{target_macs:.3f}"},
+            "macs_overshoot_tolerance_pct": {macs_overshoot_tolerance_pct:.2f},
+            "macs_undershoot_tolerance_pct": {macs_undershoot_tolerance_pct:.2f},
+            "math": "If MACs target present: choose ratio to land within tolerance; else new_ratio = old_ratio × (target/achieved)",
+            "forbidden_check_passed": true
+        }}
+        }}
 
-    FINAL VERIFICATION:
-    1) If MACs target present: Will the proposed ratio land achieved MACs within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% of target?
-    2) If MACs not present: Will the proposed ratio achieve {target_ratio*100:.1f}% ± 2% parameter reduction?
-    3) Did you avoid forbidden combinations?"""
+        FINAL VERIFICATION:
+        1) If MACs target present: Will the proposed ratio land achieved MACs within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% of target?
+        2) If MACs not present: Will the proposed ratio achieve {target_ratio*100:.1f}% ± 2% parameter reduction?
+        3) Did you avoid forbidden combinations?"""
 
         try:
             response = await self.llm.ainvoke([
@@ -1305,14 +1344,8 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         REASON: Learn from previous attempts and aim for a specific MACs budget
         """
         dataset = state.get('dataset', 'cifar10')
-        target_ratio = state.get('target_pruning_ratio', 0.2)
-        history = state.get('history', [])
-        current_revision = state.get('revision_number', 0)
+        target_ratio = state.get('target_pruning_ratio')
 
-        # --- MACs-first context pulled from state (if available) ---
-        macs_overshoot_tolerance_pct = float(state.get('macs_overshoot_tolerance_pct', 1.0))
-        macs_undershoot_tolerance_pct = float(state.get('macs_undershoot_tolerance_pct', 5.0))
-        
         # Get MACs values from multiple possible sources with proper fallbacks
         baseline_macs_val = (
             state.get('baseline_macs') or 
@@ -1335,6 +1368,21 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
 
         baseline_macs = _to_g(baseline_macs_val)
         target_macs = _to_g(target_macs_val)
+
+        if target_ratio is None and baseline_macs and target_macs:
+            target_ratio = (baseline_macs - target_macs) / baseline_macs
+            print(f"[🔧] Calculated target ratio from MACs: {target_ratio:.3f} ({target_ratio*100:.1f}%)")
+        elif target_ratio is None:
+            raise ValueError("No target_pruning_ratio provided and no MAC targets available to calculate ratio")
+
+
+        history = state.get('history', [])
+        current_revision = state.get('revision_number', 0)
+
+        # --- MACs-first context pulled from state (if available) ---
+        macs_overshoot_tolerance_pct = float(state.get('macs_overshoot_tolerance_pct', 1.0))
+        macs_undershoot_tolerance_pct = float(state.get('macs_undershoot_tolerance_pct', 5.0))
+        
 
         print(f"[🧠] ViT Analysis with Historical Learning (MACs-first):")
         print(f"   Target ratio: {target_ratio:.3f} (user-specified)")
@@ -1475,7 +1523,7 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         target_macs=None,
         macs_overshoot_tolerance_pct=1.0,
         macs_undershoot_tolerance_pct=5.0,
-    ):
+        ):
         """
         Use LLM to determine ViT isomorphic ratios based on historical results.
         """
@@ -1514,87 +1562,87 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
                 
                 if mac_error_pct > macs_overshoot_tolerance_pct:
                     direction_analysis = f"""
-    SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) > Target MACs ({last_target_macs/1e9:.3f}G)
-    MAC Error: +{mac_error_pct:.1f}% (exceeds +{macs_overshoot_tolerance_pct:.1f}% limit - insufficient pruning)
-    DIRECTION NEEDED: HIGHER multipliers for more aggressive pruning to reduce MACs
-    """
+                    SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) > Target MACs ({last_target_macs/1e9:.3f}G)
+                    MAC Error: +{mac_error_pct:.1f}% (exceeds +{macs_overshoot_tolerance_pct:.1f}% limit - insufficient pruning)
+                    DIRECTION NEEDED: HIGHER multipliers for more aggressive pruning to reduce MACs
+                    """
                 elif mac_error_pct < -macs_undershoot_tolerance_pct:
                     direction_analysis = f"""
-            SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) < Target MACs ({last_target_macs/1e9:.3f}G)
-            MAC Error: {mac_error_pct:.1f}% (exceeds -{macs_undershoot_tolerance_pct:.1f}% limit - excessive pruning)
-            DIRECTION NEEDED: LOWER multipliers for less aggressive pruning to increase MACs
-            """
+                    SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) < Target MACs ({last_target_macs/1e9:.3f}G)
+                    MAC Error: {mac_error_pct:.1f}% (exceeds -{macs_undershoot_tolerance_pct:.1f}% limit - excessive pruning)
+                    DIRECTION NEEDED: LOWER multipliers for less aggressive pruning to increase MACs
+                    """
                 else:
                     direction_analysis = f"""
-            SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) ≈ Target MACs ({last_target_macs/1e9:.3f}G)
-            MAC Error: {mac_error_pct:.1f}% (within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance)
-            DIRECTION NEEDED: Minor adjustments to fine-tune to exact target
-            """
+                    SITUATION ANALYSIS: Achieved MACs ({last_achieved_macs/1e9:.3f}G) ≈ Target MACs ({last_target_macs/1e9:.3f}G)
+                    MAC Error: {mac_error_pct:.1f}% (within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance)
+                    DIRECTION NEEDED: Minor adjustments to fine-tune to exact target
+                    """
 
         prompt = f"""You are an expert in ViT pruning for {model_name} on {dataset}.
 
-    CRITICAL MACs-FIRST TASK: Analyze historical ViT pruning attempts and determine optimal isomorphic ratios
-    to achieve a MACs budget of {target_str} (baseline {baseline_str}) within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance.
+        CRITICAL MACs-FIRST TASK: Analyze historical ViT pruning attempts and determine optimal isomorphic ratios
+        to achieve a MACs budget of {target_str} (baseline {baseline_str}) within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance.
 
-    CRITICAL MULTIPLIER-MAC RELATIONSHIP (MEMORIZE THIS):
-    =====================================================
-    - HIGHER multipliers = MORE aggressive pruning = FEWER MACs (closer to target if overweight)
-    - LOWER multipliers = LESS aggressive pruning = MORE MACs (closer to target if underweight)
-    - If achieved MACs > target MACs (too heavy): INCREASE multipliers to prune more
-    - If achieved MACs < target MACs (too light): DECREASE multipliers to prune less
+        CRITICAL MULTIPLIER-MAC RELATIONSHIP (MEMORIZE THIS):
+        =====================================================
+        - HIGHER multipliers = MORE aggressive pruning = FEWER MACs (closer to target if overweight)
+        - LOWER multipliers = LESS aggressive pruning = MORE MACs (closer to target if underweight)
+        - If achieved MACs > target MACs (too heavy): INCREASE multipliers to prune more
+        - If achieved MACs < target MACs (too light): DECREASE multipliers to prune less
 
-    {direction_analysis}
+        {direction_analysis}
 
-    HISTORICAL DATA (most relevant snippets first):
-    {history_text}
+        HISTORICAL DATA (most relevant snippets first):
+        {history_text}
 
-    EXPLICIT REASONING CHAIN (complete these based on the relationship above):
-    Step 1: "Across {len(history)} attempts, the highest accuracy observed was ___%."
-    Step 2: "That attempt used mlp=___, qkv=___ and achieved ___G MACs with error ___% vs target."
-    Step 3: "PATTERN ANALYSIS: The dominant failure pattern is [MAC overshoot/MAC undershoot/mixed results]."
-    Step 4: "DIRECTION NEEDED: Based on MAC errors, I need [HIGHER/LOWER/FINE-TUNED] multipliers because [achieved MACs are consistently above/below/near target]."
-    Step 5: "LEARNED RELATIONSHIP: In this system, increasing multipliers → fewer MACs (more pruning); decreasing multipliers → more MACs (less pruning)."
-    Step 6: "TARGET ACHIEVEMENT: To reach {target_str}, I need to [increase/decrease/fine-tune] multipliers by [small/moderate/significant] amounts."
-    Step 7: "SAFETY: I will adjust MLP more than QKV to preserve attention accuracy, using [conservative/moderate/aggressive] changes."
-    Step 8: "CALCULATION: My new multipliers will be: mlp=___ (was ___), qkv=___ (was ___) with justification."
+        EXPLICIT REASONING CHAIN (complete these based on the relationship above):
+        Step 1: "Across {len(history)} attempts, the highest accuracy observed was ___%."
+        Step 2: "That attempt used mlp=___, qkv=___ and achieved ___G MACs with error ___% vs target."
+        Step 3: "PATTERN ANALYSIS: The dominant failure pattern is [MAC overshoot/MAC undershoot/mixed results]."
+        Step 4: "DIRECTION NEEDED: Based on MAC errors, I need [HIGHER/LOWER/FINE-TUNED] multipliers because [achieved MACs are consistently above/below/near target]."
+        Step 5: "LEARNED RELATIONSHIP: In this system, increasing multipliers → fewer MACs (more pruning); decreasing multipliers → more MACs (less pruning)."
+        Step 6: "TARGET ACHIEVEMENT: To reach {target_str}, I need to [increase/decrease/fine-tune] multipliers by [small/moderate/significant] amounts."
+        Step 7: "SAFETY: I will adjust MLP more than QKV to preserve attention accuracy, using [conservative/moderate/aggressive] changes."
+        Step 8: "CALCULATION: My new multipliers will be: mlp=___ (was ___), qkv=___ (was ___) with justification."
 
-    LEARNING OBJECTIVES:
-    1) Identify which (mlp,qkv) settings produced MACs closest to the target (within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%).
-    2) Prefer strategies that kept accuracy ≥ {accuracy_threshold:.1f}% when possible.
-    3) Treat attention (QKV) conservatively; move most change into MLP when adjusting.
-    4) Make minimal changes if a high-accuracy attempt is near the target MACs band.
-    5) Predict specific multipliers that will place achieved MACs inside the +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance band.
+        LEARNING OBJECTIVES:
+        1) Identify which (mlp,qkv) settings produced MACs closest to the target (within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%).
+        2) Prefer strategies that kept accuracy ≥ {accuracy_threshold:.1f}% when possible.
+        3) Treat attention (QKV) conservatively; move most change into MLP when adjusting.
+        4) Make minimal changes if a high-accuracy attempt is near the target MACs band.
+        5) Predict specific multipliers that will place achieved MACs inside the +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% tolerance band.
 
-    SUCCESS BAND (MACs-first):
-    - Allowed achieved MACs error: -{macs_undershoot_tolerance_pct:.1f}% … +{macs_overshoot_tolerance_pct:.1f}% relative to the target MACs.
+        SUCCESS BAND (MACs-first):
+        - Allowed achieved MACs error: -{macs_undershoot_tolerance_pct:.1f}% … +{macs_overshoot_tolerance_pct:.1f}% relative to the target MACs.
 
-    VIT ISOMORPHIC HINTS:
-    - MLP multipliers govern feed-forward pruning (often ~60–70% of params/compute).
-    - QKV multipliers govern attention pruning (often ~30–40%); prune conservatively.
-    - Keep proj_multiplier=0.0 and head_multiplier=0.0 for stability.
+        VIT ISOMORPHIC HINTS:
+        - MLP multipliers govern feed-forward pruning (often ~60–70% of params/compute).
+        - QKV multipliers govern attention pruning (often ~30–40%); prune conservatively.
+        - Keep proj_multiplier=0.0 and head_multiplier=0.0 for stability.
 
-    OUTPUT FORMAT (JSON only, no markdown, no extra text):
-    {{
-    "reasoning_chain_completed": "Step 1: ... Step 2: ... Step 3: ... Step 4: ... Step 5: ... Step 6: ... Step 7: ... Step 8: ...",
-    "learned_relationship": "Increasing multipliers → [lower/higher] MACs; decreasing multipliers → [higher/lower] MACs",
-    "direction_decision": "I will [increase/decrease] mlp by __ and [increase/decrease] qkv by __ to meet +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% band",
-    "best_previous_attempt": "MACs ___G (error ___%), mlp=___, qkv=___, accuracy ___%",
-    "improvement_strategy": "Minimal/Moderate changes focused on MLP/QKV because ...",
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "pruning_ratio": {target_ratio:.3f},
-    "round_to": 2,def get_dataset_specific_content(
-    "global_pruning": true,
-    "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
-"rationale": "MACs-first: target {target_str} within +{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}%. Based on history, these multipliers should land inside the band while preserving accuracy.",
-    "architecture_type": "vit",
-    "isomorphic_group_ratios": {{
-        "qkv_multiplier": YOUR_HISTORY_DRIVEN_VALUE,
-        "mlp_multiplier": YOUR_HISTORY_DRIVEN_VALUE,
-        "proj_multiplier": 0.0,
-        "head_multiplier": 0.0
-    }},
-    "confidence_check": "These multipliers will bring MACs into the +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% band because ..."
-    }}"""
+        OUTPUT FORMAT (JSON only, no markdown, no extra text):
+        {{
+        "reasoning_chain_completed": "Step 1: ... Step 2: ... Step 3: ... Step 4: ... Step 5: ... Step 6: ... Step 7: ... Step 8: ...",
+        "learned_relationship": "Increasing multipliers → [lower/higher] MACs; decreasing multipliers → [higher/lower] MACs",
+        "direction_decision": "I will [increase/decrease] mlp by __ and [increase/decrease] qkv by __ to meet +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% band",
+        "best_previous_attempt": "MACs ___G (error ___%), mlp=___, qkv=___, accuracy ___%",
+        "improvement_strategy": "Minimal/Moderate changes focused on MLP/QKV because ...",
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "pruning_ratio": {target_ratio:.3f},
+        "round_to": 2,def get_dataset_specific_content(
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
+        "rationale": "MACs-first: target {target_str} within +{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}%. Based on history, these multipliers should land inside the band while preserving accuracy.",
+            "architecture_type": "vit",
+            "isomorphic_group_ratios": {{
+                "qkv_multiplier": YOUR_HISTORY_DRIVEN_VALUE,
+                "mlp_multiplier": YOUR_HISTORY_DRIVEN_VALUE,
+                "proj_multiplier": 0.0,
+                "head_multiplier": 0.0
+            }},
+        "confidence_check": "These multipliers will bring MACs into the +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% band because ..."
+        }}"""
 
         try:
             response = await self.llm.ainvoke([
@@ -2619,42 +2667,42 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
 
         prompt = f"""You are an expert in ViT pruning for {model_name} on {dataset}.
 
-    TASK: Propose a baseline ViT isomorphic pruning strategy that hits a MACs budget of {target_str} (baseline {baseline_str}).
-    TOLERANCE: Achieved MACs must be within +{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}% of the target MACs (MACs-first objective).
+        TASK: Propose a baseline ViT isomorphic pruning strategy that hits a MACs budget of {target_str} (baseline {baseline_str}).
+        TOLERANCE: Achieved MACs must be within +{macs_overshoot_tolerance_pct:.1f}% / -{macs_undershoot_tolerance_pct:.1f}% of the target MACs (MACs-first objective).
 
-    This is the FIRST ATTEMPT — there is no historical data. Make a conservative, accuracy-preserving choice.
+        This is the FIRST ATTEMPT — there is no historical data. Make a conservative, accuracy-preserving choice.
 
-    VIT ARCHITECTURE CONTEXT ({model_name.upper()}):
-    - ViTs comprise MLP (feed-forward) blocks and attention blocks (QKV + projection).
-    - MLP usually contributes ~60–70% of parameters; attention ~30–40%.
-    - In a MACs-first objective, tune multipliers to bring MACs near the target, favoring MLP pruning over attention.
+        VIT ARCHITECTURE CONTEXT ({model_name.upper()}):
+        - ViTs comprise MLP (feed-forward) blocks and attention blocks (QKV + projection).
+        - MLP usually contributes ~60–70% of parameters; attention ~30–40%.
+        - In a MACs-first objective, tune multipliers to bring MACs near the target, favoring MLP pruning over attention.
 
-    DATASET HINTS ({dataset.upper()}):
-    - ImageNet: strong accuracy preservation; keep attention pruning minimal or zero.
-    - CIFAR-10: can be more aggressive; still avoid over-pruning attention early.
+        DATASET HINTS ({dataset.upper()}):
+        - ImageNet: strong accuracy preservation; keep attention pruning minimal or zero.
+        - CIFAR-10: can be more aggressive; still avoid over-pruning attention early.
 
-    BASELINE GUIDELINES:
-    - Start conservative; prefer pruning in MLP over QKV.
-    - Keep proj_multiplier=0.0 and head_multiplier=0.0.
-    - Choose integer-friendly round_to for hardware alignment.
+        BASELINE GUIDELINES:
+        - Start conservative; prefer pruning in MLP over QKV.
+        - Keep proj_multiplier=0.0 and head_multiplier=0.0.
+        - Choose integer-friendly round_to for hardware alignment.
 
-    OUTPUT FORMAT (JSON only):
-    {{
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "pruning_ratio": {target_ratio:.3f},
-    "round_to": X,
-    "global_pruning": true,
-    "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
-    "rationale": "MACs-first baseline for {model_name} on {dataset}: target {target_str} within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%. Prefer MLP pruning, protect attention. Explain why chosen multipliers should land near the MACs target.",
-    "architecture_type": "vit",
-    "isomorphic_group_ratios": {{
-        "qkv_multiplier": YOUR_CONSERVATIVE_ESTIMATE,
-        "mlp_multiplier": YOUR_CONSERVATIVE_ESTIMATE,
-        "proj_multiplier": 0.0,
-        "head_multiplier": 0.0
-    }}
-    }}
-    CRITICAL: Pick conservative multipliers likely to land within the asymmetric MACs tolerance band while preserving accuracy."""
+        OUTPUT FORMAT (JSON only):
+        {{
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "pruning_ratio": {target_ratio:.3f},
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
+        "rationale": "MACs-first baseline for {model_name} on {dataset}: target {target_str} within +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%. Prefer MLP pruning, protect attention. Explain why chosen multipliers should land near the MACs target.",
+        "architecture_type": "vit",
+        "isomorphic_group_ratios": {{
+            "qkv_multiplier": YOUR_CONSERVATIVE_ESTIMATE,
+            "mlp_multiplier": YOUR_CONSERVATIVE_ESTIMATE,
+            "proj_multiplier": 0.0,
+            "head_multiplier": 0.0
+        }}
+        }}
+        CRITICAL: Pick conservative multipliers likely to land within the asymmetric MACs tolerance band while preserving accuracy."""
 
         try:
             response = await self.llm.ainvoke([
@@ -2864,51 +2912,51 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
 
         prompt = f"""You are a ViT pruning expert creating a variation of a strategy that was already tried.
 
-    SITUATION: The original ViT strategy was already attempted and needs adjustment.
+        SITUATION: The original ViT strategy was already attempted and needs adjustment.
 
-    MACs REQUIREMENT: Achieved MACs must be within -{undershoot_tol_pct:.1f}%/+{overshoot_tol_pct:.1f}% of the target MACs.
+        MACs REQUIREMENT: Achieved MACs must be within -{undershoot_tol_pct:.1f}%/+{overshoot_tol_pct:.1f}% of the target MACs.
 
-    ORIGINAL STRATEGY:
-    - MLP multiplier: {original_mlp:.3f}
-    - QKV multiplier: {original_qkv:.3f}
-    - Importance: {original_strategy.get('importance_criterion', 'unknown')}
-    - Round-to: {original_strategy.get('round_to', 'unknown')}
+        ORIGINAL STRATEGY:
+        - MLP multiplier: {original_mlp:.3f}
+        - QKV multiplier: {original_qkv:.3f}
+        - Importance: {original_strategy.get('importance_criterion', 'unknown')}
+        - Round-to: {original_strategy.get('round_to', 'unknown')}
 
-    PREVIOUS RESULT:
-    - Target MACs: {target_macs_str}
-    - Achieved MACs: {achieved_macs_str}
-    - MACs error: {macs_error_str}  (positive = over budget / too heavy; negative = under budget / too light)
+        PREVIOUS RESULT:
+        - Target MACs: {target_macs_str}
+        - Achieved MACs: {achieved_macs_str}
+        - MACs error: {macs_error_str}  (positive = over budget / too heavy; negative = under budget / too light)
 
-    TASK: Create a modified ViT strategy that will bring achieved MACs into the allowed band [-{undershoot_tol_pct:.1f}%, +{overshoot_tol_pct:.1f}%] relative to target MACs.
-    
-    ANALYSIS GUIDANCE:
-    - If MACs error > +{overshoot_tol_pct:.1f}% (too heavy / over budget): Increase multipliers strategically
-    - If MACs error < -{undershoot_tol_pct:.1f}% (too light beyond allowed under-budget): Decrease multipliers carefully
-    - Consider changing importance criterion or round_to if needed
-    - Make smart adjustments based on {model_name} characteristics and ViT architecture
+        TASK: Create a modified ViT strategy that will bring achieved MACs into the allowed band [-{undershoot_tol_pct:.1f}%, +{overshoot_tol_pct:.1f}%] relative to target MACs.
+        
+        ANALYSIS GUIDANCE:
+        - If MACs error > +{overshoot_tol_pct:.1f}% (too heavy / over budget): Increase multipliers strategically
+        - If MACs error < -{undershoot_tol_pct:.1f}% (too light beyond allowed under-budget): Decrease multipliers carefully
+        - Consider changing importance criterion or round_to if needed
+        - Make smart adjustments based on {model_name} characteristics and ViT architecture
 
-    VARIATION STRATEGY:
-    - Prioritize safe changes: increase/decrease MLP more than QKV (attention is critical)
-    - Avoid dramatic changes that could cause catastrophic failure
-    - Consider the parameter distribution: MLP ≈ 60-70%, Attention ≈ 30-40%
+        VARIATION STRATEGY:
+        - Prioritize safe changes: increase/decrease MLP more than QKV (attention is critical)
+        - Avoid dramatic changes that could cause catastrophic failure
+        - Consider the parameter distribution: MLP ≈ 60-70%, Attention ≈ 30-40%
 
-    OUTPUT FORMAT (JSON only):
-    {{
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "pruning_ratio": {target_ratio:.3f},
-    "round_to": X,
-    "global_pruning": true,
-    "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
-    "rationale": "Variation strategy (MACs-first): Previous MACs error = {macs_error_str}. Policy allows -{undershoot_tol_pct:.1f}%/+{overshoot_tol_pct:.1f}%. Therefore I [increased/decreased] mlp_multiplier from {original_mlp:.3f}→[new] and qkv_multiplier from {original_qkv:.3f}→[new] to move MACs into the allowed band, prioritizing accuracy.",    "architecture_type": "vit",
-    "isomorphic_group_ratios": {{
-        "qkv_multiplier": YOUR_ADJUSTED_VALUE,
-        "mlp_multiplier": YOUR_ADJUSTED_VALUE,
-        "proj_multiplier": 0.0,
-        "head_multiplier": 0.0
-    }}
-    }}
+        OUTPUT FORMAT (JSON only):
+        {{
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "pruning_ratio": {target_ratio:.3f},
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "pruning_ratio", "round_to"],
+        "rationale": "Variation strategy (MACs-first): Previous MACs error = {macs_error_str}. Policy allows -{undershoot_tol_pct:.1f}%/+{overshoot_tol_pct:.1f}%. Therefore I [increased/decreased] mlp_multiplier from {original_mlp:.3f}→[new] and qkv_multiplier from {original_qkv:.3f}→[new] to move MACs into the allowed band, prioritizing accuracy.",    "architecture_type": "vit",
+        "isomorphic_group_ratios": {{
+            "qkv_multiplier": YOUR_ADJUSTED_VALUE,
+            "mlp_multiplier": YOUR_ADJUSTED_VALUE,
+            "proj_multiplier": 0.0,
+            "head_multiplier": 0.0
+        }}
+        }}
 
-    CRITICAL: Make intelligent adjustments based on whether MACs were over budget (>+{overshoot_tol_pct:.1f}%) or too far under budget (< -{undershoot_tol_pct:.1f}%)."""
+        CRITICAL: Make intelligent adjustments based on whether MACs were over budget (>+{overshoot_tol_pct:.1f}%) or too far under budget (< -{undershoot_tol_pct:.1f}%)."""
 
         try:
             response = await self.llm.ainvoke([
@@ -3146,55 +3194,55 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         
         prompt = f"""You are an expert in CNN pruning for {model_name} on {dataset}.
 
-    CRITICAL LEARNING TASK: Analyze historical pruning attempts and determine the optimal strategy to achieve {target_ratio*100:.0f}% parameter reduction.
+        CRITICAL LEARNING TASK: Analyze historical pruning attempts and determine the optimal strategy to achieve {target_ratio*100:.0f}% parameter reduction.
 
-    HISTORICAL LEARNING DATA:
-    {history_text}
+        HISTORICAL LEARNING DATA:
+        {history_text}
 
-    LEARNING OBJECTIVES:
-    1. IDENTIFY PATTERNS: What channel ratios actually achieved what parameter reductions?
-    2. LEARN RELATIONSHIPS: How does {model_name} respond to different channel pruning ratios?
-    3. AVOID FAILURES: Which strategies led to catastrophic accuracy loss (<1% accuracy)?
-    4. OPTIMIZE PARAMETERS: What combinations of importance_criterion + round_to worked best?
-    5. PREDICT ACCURATELY: Based on the pattern, what channel ratio will hit {target_ratio*100:.0f}% exactly?
+        LEARNING OBJECTIVES:
+        1. IDENTIFY PATTERNS: What channel ratios actually achieved what parameter reductions?
+        2. LEARN RELATIONSHIPS: How does {model_name} respond to different channel pruning ratios?
+        3. AVOID FAILURES: Which strategies led to catastrophic accuracy loss (<1% accuracy)?
+        4. OPTIMIZE PARAMETERS: What combinations of importance_criterion + round_to worked best?
+        5. PREDICT ACCURATELY: Based on the pattern, what channel ratio will hit {target_ratio*100:.0f}% exactly?
 
-    ARCHITECTURE INSIGHTS FOR {model_name.upper()}:
-    - The mathematical sqrt formula FAILS for real architectures due to skip connections
-    - You must learn the ACTUAL relationship from the historical data above
-    - Each architecture has unique scaling patterns that only emerge from real experiments
+        ARCHITECTURE INSIGHTS FOR {model_name.upper()}:
+        - The mathematical sqrt formula FAILS for real architectures due to skip connections
+        - You must learn the ACTUAL relationship from the historical data above
+        - Each architecture has unique scaling patterns that only emerge from real experiments
 
-    LEARNING STRATEGY:
-    - If previous attempts overshoot the target → suggest lower channel ratio
-    - If previous attempts undersoot the target → suggest higher channel ratio
-    - If accuracy collapsed → identify what caused it and avoid those parameters
-    - If accuracy was preserved → learn what made that strategy successful
+        LEARNING STRATEGY:
+        - If previous attempts overshoot the target → suggest lower channel ratio
+        - If previous attempts undersoot the target → suggest higher channel ratio
+        - If accuracy collapsed → identify what caused it and avoid those parameters
+        - If accuracy was preserved → learn what made that strategy successful
 
-    ADVANCED LEARNING:
-    - Look for convergence patterns in the data
-    - Identify if certain importance_criterion values work better for this model/dataset
-    - Learn optimal round_to values from previous hardware efficiency results
-    - Extrapolate or interpolate based on the trend in the historical data
+        ADVANCED LEARNING:
+        - Look for convergence patterns in the data
+        - Identify if certain importance_criterion values work better for this model/dataset
+        - Learn optimal round_to values from previous hardware efficiency results
+        - Extrapolate or interpolate based on the trend in the historical data
 
-    🚨 CRITICAL DISTINCTION:
-    - target_ratio = {target_ratio:.3f} (USER'S GOAL - never change this)
-    - channel_pruning_ratio = ??? (TOOL to achieve the goal - this is what you calculate)
+        🚨 CRITICAL DISTINCTION:
+        - target_ratio = {target_ratio:.3f} (USER'S GOAL - never change this)
+        - channel_pruning_ratio = ??? (TOOL to achieve the goal - this is what you calculate)
 
-    WRONG THINKING: "User wants 20% so I'll use channel_ratio = 0.200"
-    RIGHT THINKING: "User wants 20% but channel_ratio = 0.200 gives 31%, so I need channel_ratio ≈ 0.126"
+        WRONG THINKING: "User wants 20% so I'll use channel_ratio = 0.200"
+        RIGHT THINKING: "User wants 20% but channel_ratio = 0.200 gives 31%, so I need channel_ratio ≈ 0.126"
 
-    Your job is to find the RIGHT channel_pruning_ratio that produces the target parameter reduction.
+        Your job is to find the RIGHT channel_pruning_ratio that produces the target parameter reduction.
 
-    OUTPUT FORMAT (JSON only):
-    {{
-    "channel_pruning_ratio": 0.XXXX,
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "round_to": X,
-    "global_pruning": true,
-    "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
-    "rationale": "CRITICAL: channel_pruning_ratio is NOT the same as target_ratio! Based on {len(history)} attempts, I learned that channel_ratio X produces Y% parameter reduction. To achieve {target_ratio*100:.0f}% parameter reduction, I calculated channel_ratio = [show math] because [reasoning from data]."
-    }}
+        OUTPUT FORMAT (JSON only):
+        {{
+        "channel_pruning_ratio": 0.XXXX,
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
+        "rationale": "CRITICAL: channel_pruning_ratio is NOT the same as target_ratio! Based on {len(history)} attempts, I learned that channel_ratio X produces Y% parameter reduction. To achieve {target_ratio*100:.0f}% parameter reduction, I calculated channel_ratio = [show math] because [reasoning from data]."
+        }}
 
-    Learn from the data, don't guess. Base your predictions on observed patterns."""
+        Learn from the data, don't guess. Base your predictions on observed patterns."""
 
         try:
             response = await self.llm.ainvoke([
@@ -3238,34 +3286,34 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         
         prompt = f"""You are a CNN pruning expert creating a variation of a strategy.
 
-    SITUATION: The original strategy was already tried and needs adjustment.
+        SITUATION: The original strategy was already tried and needs adjustment.
 
-    ORIGINAL STRATEGY:
-    - Channel ratio: {original_channel:.4f}
-    - Importance: {original_strategy.get('importance_criterion', 'unknown')}
-    - Round-to: {original_strategy.get('round_to', 'unknown')}
+        ORIGINAL STRATEGY:
+        - Channel ratio: {original_channel:.4f}
+        - Importance: {original_strategy.get('importance_criterion', 'unknown')}
+        - Round-to: {original_strategy.get('round_to', 'unknown')}
 
-    PREVIOUS RESULT:
-    - Achieved: {previous_achieved*100:.1f}% parameter reduction
-    - Target: {target_ratio*100:.1f}% parameter reduction
+        PREVIOUS RESULT:
+        - Achieved: {previous_achieved*100:.1f}% parameter reduction
+        - Target: {target_ratio*100:.1f}% parameter reduction
 
-    TASK: Create a modified strategy that will get closer to the {target_ratio*100:.1f}% target.
+        TASK: Create a modified strategy that will get closer to the {target_ratio*100:.1f}% target.
 
-    ANALYSIS:
-    - If previous overshoot: Reduce channel ratio
-    - If previous undersoot: Increase channel ratio  
-    - Consider changing importance criterion or round_to if needed
-    - Make smart adjustments based on {model_name} characteristics
+        ANALYSIS:
+        - If previous overshoot: Reduce channel ratio
+        - If previous undersoot: Increase channel ratio  
+        - Consider changing importance criterion or round_to if needed
+        - Make smart adjustments based on {model_name} characteristics
 
-    OUTPUT FORMAT (JSON only):
-    {{
-    "channel_pruning_ratio": 0.XXXX,
-    "importance_criterion": "taylor|l1norm|l2norm",
-    "round_to": X,
-    "global_pruning": true,
-    "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
-    "rationale": "Variation strategy: explain the adjustments made and why"
-    }}"""
+        OUTPUT FORMAT (JSON only):
+        {{
+        "channel_pruning_ratio": 0.XXXX,
+        "importance_criterion": "taylor|l1norm|l2norm",
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
+        "rationale": "Variation strategy: explain the adjustments made and why"
+        }}"""
 
         try:
             response = await self.llm.ainvoke([
@@ -3375,40 +3423,40 @@ CRITICAL: This is a baseline estimate. Choose conservative channel ratio that is
         # Add JSON formatting instructions to the prompt
         json_instructions = """
 
-CRITICAL JSON OUTPUT REQUIREMENTS:
-================================
-- Output ONLY valid JSON with NO comments
-- Do NOT use # or // comments in JSON
-- No markdown code blocks (no ```)
-- Use double quotes for all strings
-- No trailing commas
-- No explanatory text before or after JSON
+        CRITICAL JSON OUTPUT REQUIREMENTS:
+        ================================
+        - Output ONLY valid JSON with NO comments
+        - Do NOT use # or // comments in JSON
+        - No markdown code blocks (no ```)
+        - Use double quotes for all strings
+        - No trailing commas
+        - No explanatory text before or after JSON
 
-Example format for ViT models:
-{
-  "importance_criterion": "taylor",
-  "pruning_ratio": 0.3,
-  "round_to": 2,
-  "global_pruning": true,
-  "rationale": "Explanation without comments",
-  "isomorphic_group_ratios": {
-    "qkv_multiplier": 0.5,
-    "mlp_multiplier": 1.0,
-    "proj_multiplier": 0.0,
-    "head_multiplier": 0.0
-  }
-}
+        Example format for ViT models:
+        {
+        "importance_criterion": "taylor",
+        "pruning_ratio": 0.3,
+        "round_to": 2,
+        "global_pruning": true,
+        "rationale": "Explanation without comments",
+        "isomorphic_group_ratios": {
+            "qkv_multiplier": 0.5,
+            "mlp_multiplier": 1.0,
+            "proj_multiplier": 0.0,
+            "head_multiplier": 0.0
+        }
+        }
 
-Example format for CNNs:
-{
-  "importance_criterion": "taylor",
-  "channel_pruning_ratio": 0.3,
-  "round_to": 2,
-  "global_pruning": true,
-  "rationale": "Using Taylor importance with 0.3 channel ratio to target 50% parameter reduction."
-}
+        Example format for CNNs:
+        {
+        "importance_criterion": "taylor",
+        "channel_pruning_ratio": 0.3,
+        "round_to": 2,
+        "global_pruning": true,
+        "rationale": "Using Taylor importance with 0.3 channel ratio to target 50% parameter reduction."
+        }
 
-"""
+        """
         
         final_prompt = enhanced_prompt + json_instructions
         
@@ -3449,17 +3497,17 @@ Example format for CNNs:
         
         corrections = corrected_strategy.get('corrections_applied', [])
         feedback_prompt = f"""
-    {original_prompt}
+        {original_prompt}
 
-    IMPORTANT FEEDBACK FROM PREVIOUS ATTEMPT:
-    Your previous suggestion required these safety corrections:
-    {chr(10).join(f"- {correction}" for correction in corrections)}
+        IMPORTANT FEEDBACK FROM PREVIOUS ATTEMPT:
+        Your previous suggestion required these safety corrections:
+        {chr(10).join(f"- {correction}" for correction in corrections)}
 
-    Please provide a NEW recommendation that avoids these issues and stays within safety limits.
-    Remember: The goal is to suggest ratios that achieve the target while maintaining model viability.
+        Please provide a NEW recommendation that avoids these issues and stays within safety limits.
+        Remember: The goal is to suggest ratios that achieve the target while maintaining model viability.
 
-    CRITICAL FOR IMAGENET: Always use "taylor" importance criterion!
-    """
+        CRITICAL FOR IMAGENET: Always use "taylor" importance criterion!
+        """
         
         try:
             retry_response = await self.llm.ainvoke([
@@ -3535,29 +3583,29 @@ Example format for CNNs:
         
         prompt = f"""You are an expert in CNN pruning for {model_name} on {dataset}.
 
-TASK: Determine the complete pruning strategy to achieve {target_ratio*100:.0f}% parameter reduction.
+        TASK: Determine the complete pruning strategy to achieve {target_ratio*100:.0f}% parameter reduction.
 
-This is the FIRST ATTEMPT - you have no historical data to learn from.
-Make your best educated guess based on architecture knowledge.
+        This is the FIRST ATTEMPT - you have no historical data to learn from.
+        Make your best educated guess based on architecture knowledge.
 
-ARCHITECTURE ANALYSIS FOR {model_name.upper()}:
-- ResNet: Has skip connections and bottleneck blocks that amplify pruning effects
-- MobileNet: Uses depthwise separable convolutions that are very sensitive to channel changes
-- EfficientNet: Has compound scaling that affects pruning relationships
+        ARCHITECTURE ANALYSIS FOR {model_name.upper()}:
+        - ResNet: Has skip connections and bottleneck blocks that amplify pruning effects
+        - MobileNet: Uses depthwise separable convolutions that are very sensitive to channel changes
+        - EfficientNet: Has compound scaling that affects pruning relationships
 
-DATASET REQUIREMENTS ({dataset.upper()}):
-- ImageNet: 1000 classes, complex features, need accuracy preservation
-- CIFAR-10: 10 classes, simpler features, can be more aggressive
+        DATASET REQUIREMENTS ({dataset.upper()}):
+        - ImageNet: 1000 classes, complex features, need accuracy preservation
+        - CIFAR-10: 10 classes, simpler features, can be more aggressive
 
-OUTPUT FORMAT (JSON only):
-{{
-  "channel_pruning_ratio": 0.XXXX,
-  "importance_criterion": "taylor|l1norm|l2norm", 
-  "round_to": X,
-  "global_pruning": true,
-  "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
-  "rationale": "Architecture-specific reasoning for {model_name} on {dataset}"
-}}"""
+        OUTPUT FORMAT (JSON only):
+        {{
+        "channel_pruning_ratio": 0.XXXX,
+        "importance_criterion": "taylor|l1norm|l2norm", 
+        "round_to": X,
+        "global_pruning": true,
+        "parameter_tuning_order": ["importance_criterion", "channel_pruning_ratio", "round_to"],
+        "rationale": "Architecture-specific reasoning for {model_name} on {dataset}"
+        }}"""
 
         try:
             response = await self.llm.ainvoke([
