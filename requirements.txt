@@ -1,0 +1,48 @@
+# Core ML/AI frameworks
+torch>=2.5.1
+torchvision>=0.20.1
+torchaudio>=2.5.1
+timm>=1.0.19
+scikit-learn>=1.7.1
+
+# Pruning and model optimization
+torch-pruning>=1.6.0
+ptflops>=0.7.5
+
+# LangGraph and LangChain ecosystem
+langgraph>=0.2.34
+langgraph-checkpoint-sqlite>=2.0.0
+langchain>=0.3.27
+langchain-core>=0.3.75
+langchain-openai>=0.3.32
+
+# Data handling and processing
+datasets>=4.0.0
+pandas>=2.3.2
+numpy>=2.1.2
+pyarrow>=21.0.0
+
+# Experiment tracking and logging
+wandb>=0.21.3
+
+# Async and utilities
+aiosqlite>=0.21.0
+nest-asyncio>=1.6.0
+python-dotenv>=1.1.1
+
+# Web and API clients
+httpx>=0.28.1
+requests>=2.32.5
+openai>=1.106.1
+
+# Data serialization
+pydantic>=2.11.7
+orjson>=3.11.3
+pyyaml>=6.0.2
+
+# Database
+sqlalchemy>=2.0.43
+
+# Progress and utilities
+tqdm>=4.67.1
+click>=8.2.1
