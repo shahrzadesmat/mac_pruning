@@ -1,3 +1,6 @@
+import os
+os.environ["WANDB_MODE"] = "disabled"
+
 from utils.logging_wandb import add_wandb_args
 from workflow import run_pruning_workflow
 from utils.timing import time_it, time_it_async
@@ -19,7 +22,6 @@ import pbench
 from pydantic import BaseModel, Field
 from langgraph.checkpoint.sqlite import SqliteSaver
 import re
-import os
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 from dotenv import load_dotenv, find_dotenv
 import openai
@@ -59,7 +61,6 @@ import traceback
 from utils.timing import time_it, time_it_async, profiler
 import argparse
 
-os.environ["WANDB_DISABLED"] = "true"
 
 
 if __name__ == "__main__":
