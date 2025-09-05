@@ -59,6 +59,7 @@ import traceback
 from utils.timing import time_it, time_it_async, profiler
 import argparse
 
+os.environ["WANDB_DISABLED"] = "true"
 
 
 if __name__ == "__main__":
@@ -129,8 +130,7 @@ if __name__ == "__main__":
         project=args.wandb_project,
         name=args.wandb_name,
         config=wandb_config,
-        mode=args.wandb_mode,
-        settings=wandb.Settings(_disable_service=True)
+        mode=args.wandb_mode
     )
     
     print("[WandB] WandB initialized successfully.", flush=True)

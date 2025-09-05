@@ -182,9 +182,9 @@ class AnalysisAgent:
         print(f"[✅] Using LLM strategy directly - no safety overrides")
 
         # MACs-first: ignore ratio as a control parameter; rely on MAC budget downstream
-        if (target_macs is not None) and (baseline_macs is not None):
-            validated_strategy.pop('channel_pruning_ratio', None)
-            validated_strategy.pop('pruning_ratio', None)
+        # if (target_macs is not None) and (baseline_macs is not None):
+            # validated_strategy.pop('channel_pruning_ratio', None)
+            # validated_strategy.pop('pruning_ratio', None)
 
 
         # Propagate MACs context forward if LLM or state provided it
