@@ -167,11 +167,36 @@ def create_pruning_workflow():
         if 'target_pruning_ratio' in GLOBAL_STATE:
             state['target_pruning_ratio'] = GLOBAL_STATE['target_pruning_ratio']
 
-        # NEW: Handle strategic guidance from Master Agent (proper role separation)
+        # Handle strategic guidance from Master Agent (proper role separation)
         master_results = state.get('master_results', {})
         strategic_guidance = master_results.get('strategic_guidance')
 
-        if strategic_guidance and strategic_guidance.get('guidance_type') == 'mac_catastrophic_recovery':
+        if not strategic_guidance and master_results:
+            rationale = master_results.get('rationale', '')
+            multiplier_order = master_results.get('multiplier_tuning_order', [])
+            directives = master_results.get('directives', '')
+            
+            if rationale or multiplier_order or directives:
+                print(f"[📋] Found Master Agent guidance:")
+                if rationale:
+                    print(f"   Strategy: {rationale}")
+                if multiplier_order:
+                    print(f"   MAC reduction order: {' -> '.join(multiplier_order)}")
+                if directives:
+                    print(f"   Directives: {directives}")
+                
+                # Store guidance for Analysis Agent to use
+                state['master_strategic_guidance'] = {
+                    'guidance_type': 'mac_strategy',
+                    'recommendations': [rationale] if rationale else [],
+                    'multiplier_tuning_order': multiplier_order,
+                    'directives': directives
+                }
+            else:
+                print(f"[📋] No strategic guidance from Master Agent - proceeding with standard analysis")
+
+
+        elif strategic_guidance and strategic_guidance.get('guidance_type') == 'mac_catastrophic_recovery':
             print(f"[🚨] MAC CATASTROPHIC RECOVERY MODE: Received strategic guidance from Master Agent")
             print(f"[📋] Strategic guidance includes:")
             

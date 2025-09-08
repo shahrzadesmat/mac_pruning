@@ -36,7 +36,7 @@ Baseline MACs: {base_str}
 Target MACs: {tgt_str}
 Overshoot tolerance (strict): +{macs_overshoot_tolerance_pct:.1f}%
 Undershoot tolerance (lenient): -{macs_undershoot_tolerance_pct:.1f}%
-Acceptable range: {target_macs * (1 - macs_undershoot_tolerance_pct / 100):.3f}G - {target_macs * (1 + macs_overshoot_tolerance_pct / 100):.3f}G
+Acceptable range: {target_macs * (1 - macs_undershoot_tolerance_pct / 100):.3f}G - {target_macs * (1 + macs_overshoot_tolerance_pct / 100):.3f}G" if target_macs else "N/A - N/A"}
 
 CALCULATION VALIDATION REQUIRED:
 Before suggesting any multipliers, verify:

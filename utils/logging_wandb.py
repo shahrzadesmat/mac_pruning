@@ -1,3 +1,5 @@
+import wandb
+
 def add_wandb_args(parser):
     """Add WandB-related arguments to the argument parser"""
     parser.add_argument('--wandb_project', type=str, default='Pruning', 

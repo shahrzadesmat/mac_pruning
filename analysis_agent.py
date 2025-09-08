@@ -23,7 +23,7 @@ from utils.analysis_structures import PruningState
 from utils.pruning_safety import PruningSafetyValidator
 from utils.json_utils import parse_llm_json_response
 from utils.analysis_vit import ViTLearningAnalyzer
-
+from utils.pruning_safety import PruningSafetyValidator
 
 
 
@@ -448,7 +448,6 @@ class AnalysisAgent:
 
             # 5. APPLY SAFETY VALIDATION WITH ERROR HANDLING
             try:
-                from utils.enhancer import PruningSafetyValidator
                 safety_validator = PruningSafetyValidator()
                 
                 print(f"[🛡️] Applying safety validation to CNN strategy...")
