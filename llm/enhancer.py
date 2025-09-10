@@ -1,3 +1,5 @@
+import copy
+
 class DatasetAwarePromptEnhancer:
     def create_enhanced_prompt(self, dataset, target_ratio, history, state):
         """Create comprehensive enhanced prompt with MACs-first guidance (keeps signature)"""
@@ -21,6 +23,14 @@ class DatasetAwarePromptEnhancer:
         base_str = f"{baseline_macs:.3f}G" if baseline_macs else "N/A"
         tgt_str = f"{target_macs:.3f}G" if target_macs else "N/A"
 
+        # Calculate acceptable range
+        if target_macs is not None:
+            min_range = target_macs * (1 - macs_undershoot_tolerance_pct / 100)
+            max_range = target_macs * (1 + macs_overshoot_tolerance_pct / 100)
+            acceptable_range = f"{min_range:.3f}G - {max_range:.3f}G"
+        else:
+            acceptable_range = "N/A - N/A"
+
         enhanced_prompt = f"""
 You are an expert in Vision Transformer pruning with deep knowledge of {dataset} requirements.
 
@@ -36,7 +46,7 @@ Baseline MACs: {base_str}
 Target MACs: {tgt_str}
 Overshoot tolerance (strict): +{macs_overshoot_tolerance_pct:.1f}%
 Undershoot tolerance (lenient): -{macs_undershoot_tolerance_pct:.1f}%
-Acceptable range: {target_macs * (1 - macs_undershoot_tolerance_pct / 100):.3f}G - {target_macs * (1 + macs_overshoot_tolerance_pct / 100):.3f}G" if target_macs else "N/A - N/A"}
+Acceptable range: {acceptable_range}
 
 CALCULATION VALIDATION REQUIRED:
 Before suggesting any multipliers, verify:

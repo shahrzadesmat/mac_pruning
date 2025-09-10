@@ -7,6 +7,7 @@ from llm.prompts import MASTER_AGENT_PROMPT
 from utils.analysis_structures import PruningState
 import re
 from utils.json_utils import parse_llm_json_response
+import copy
 
 
 class MasterAgent:

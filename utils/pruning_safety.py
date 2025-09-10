@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from typing import TypedDict, Any, List, Dict
 import torch.nn as nn
-
+import copy
 
 class PruningSafetyValidator:
-    def validate_and_correct(self, llm_strategy, target_ratio, dataset, history):
+    def validate_and_correct(self, llm_strategy, target_ratio, dataset, history, macs_overshoot_tolerance_pct=None, macs_undershoot_tolerance_pct=None):
         """Validate LLM strategy and apply corrections"""
         
         corrected_strategy = copy.deepcopy(llm_strategy)

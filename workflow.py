@@ -479,7 +479,7 @@ def create_pruning_workflow():
         # Call the should_continue function to check algorithmic stopping criteria
         continue_optimization, stop_reason = should_continue(state)
         
-        # ✅ CRITICAL FIX: Handle state modifications properly
+        # ✅ CRITICAL: Handle state modifications properly
         if stop_reason == "initialize_phase2":
             state['extended_search_remaining'] = 10
             GLOBAL_STATE['extended_search_remaining'] = 10  # Also update global state
@@ -600,7 +600,9 @@ def create_pruning_workflow():
                 
                 if mac_within_tolerance:
                     print(f"[✅] Achieved {achieved_macs/1e9:.3f}G MACs, meets target {target_mac:.3f}G (error: {mac_error_pct:+.1f}%)")
-                    # Success - proceed
+                    # Mark as candidate model
+                    result['is_candidate_model'] = True
+                    state['is_candidate_model'] = True
                 
                 # Store the model in MODEL_STORE if available
                 if 'prune' in result and 'model' in result['prune']:
@@ -642,7 +644,10 @@ def create_pruning_workflow():
                 entry = {
                     'revision': state.get('revision_number', 0),
                     'dataset': dataset,
+                    'is_candidate_model': mac_within_tolerance,
+                    'within_tolerance': mac_within_tolerance,
                     'strategy_used': strategy_used,
+                    'pruned_model_checkpoint': pruning_res.get('checkpoint_path', 'unknown_checkpoint.pth'),
                     # MAC-first metrics
                     'target_macs': target_mac,
                     'achieved_macs': achieved_macs,
@@ -660,8 +665,11 @@ def create_pruning_workflow():
                     entry['zero_shot_top1_accuracy'] = pruning_res.get('zero_shot_top1_accuracy', 0)
                     entry['zero_shot_top5_accuracy'] = pruning_res.get('zero_shot_top5_accuracy', 0) 
                     entry['zero_shot_accuracy'] = pruning_res.get('zero_shot_top1_accuracy', 0)  # For compatibility
+                    entry['fine_tuned_top1_accuracy'] = None
+                    entry['fine_tuned_top5_accuracy'] = None
                 else:
                     entry['zero_shot_accuracy'] = pruning_res.get('zero_shot_accuracy', 0)
+                    entry['fine_tuned_accuracy'] = None
                 
                 result.setdefault('history', []).append(entry)
                 GLOBAL_STATE['history'] = result['history']
@@ -878,67 +886,10 @@ def create_pruning_workflow():
 
         # ── Decision: within ± tolerance → fine-tune; else → back to master ────────
         if within_tolerance:
-            # Within acceptable range - proceed to fine-tuning
             print(f"[✅] MACs WITHIN TOLERANCE:")
             print(f"   Achieved: {achieved_macs/1e9:.3f}G vs Target: {target_macs/1e9:.3f}G")
             print(f"   Error: {macs_error_pct:+.2f}% (tolerance: +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
             print(f"   Zero-shot accuracy: {zero_shot_acc:.2f}% - proceeding to fine-tune")
-
-            # Mark as candidate and update history with complete strategy info
-            state['is_candidate_model'] = True
-
-            analysis_results = state.get('analysis_results', {}) or {}
-            strategy_dict = analysis_results.get('strategy_dict', {}) or {}
-            ds = dataset
-
-            # Build strategy_used (keep legacy fields if present for back-compat)
-            strategy_used = {
-                'importance_criterion': strategy_dict.get('importance_criterion', 'unknown'),
-                'round_to': strategy_dict.get('round_to', 'unknown'),
-                'global_pruning': strategy_dict.get('global_pruning', True),
-                'approach': strategy_dict.get('approach', 'unknown'),
-            }
-            if 'pruning_ratio' in strategy_dict:
-                strategy_used['pruning_ratio'] = strategy_dict['pruning_ratio']  # legacy
-            if 'channel_pruning_ratio' in strategy_dict:
-                strategy_used['channel_pruning_ratio'] = strategy_dict['channel_pruning_ratio']
-            if 'isomorphic_group_ratios' in strategy_dict:
-                strategy_used['isomorphic_group_ratios'] = strategy_dict['isomorphic_group_ratios']
-                print(f"[📝] Storing isomorphic ratios in candidate history: {strategy_dict['isomorphic_group_ratios']}")
-
-            # Create history entry (MACs-first, keep legacy fields if available)
-            history_entry = {
-                'revision': state.get('revision_number', 0),
-                'dataset': ds,
-                'is_candidate_model': True,
-                'within_tolerance': True,
-                'strategy_used': strategy_used,
-                'pruned_model_checkpoint': pruning_results.get('checkpoint_path', 'unknown_checkpoint.pth'),
-                # MACs-first metrics
-                'target_macs': float(target_macs),
-                'achieved_macs': float(achieved_macs),
-                'macs_error_pct': float(macs_error_pct),
-            }
-            # Legacy ratio fields if present upstream
-            if 'target_ratio' in state:
-                history_entry['target_ratio'] = state.get('target_ratio')
-            if 'achieved_ratio' in pruning_results:
-                history_entry['achieved_ratio'] = pruning_results.get('achieved_ratio')
-
-            # Dataset-aware accuracy fields
-            if ds.lower() == 'imagenet':
-                history_entry['zero_shot_top1_accuracy'] = float(zero_shot_acc)
-                history_entry['zero_shot_accuracy'] = float(zero_shot_acc)
-                history_entry['fine_tuned_top1_accuracy'] = None
-                history_entry['fine_tuned_top5_accuracy'] = None
-            else:
-                history_entry['zero_shot_accuracy'] = float(zero_shot_acc)
-                history_entry['fine_tuned_accuracy'] = None
-
-            # Append to state history
-            state.setdefault('history', []).append(history_entry)
-            print(f"[📝] Added candidate history entry (MACs-first)")
-
             return "fine_tune"
 
         else:
@@ -956,10 +907,7 @@ def create_pruning_workflow():
                 print(f"[❌] MACS OUT OF RANGE: {macs_error_pct:.2f}% vs allowed -{macs_undershoot_tolerance_pct:.1f}%…+{macs_overshoot_tolerance_pct:.1f}%")
                 print(f"   Achieved: {achieved_macs/1e9:.3f}G vs Target: {target_macs/1e9:.3f}G")
 
-
-            return "master_normal"
-
-
+        return "master_normal"
     
     # Add nodes with dataset-aware agents
     workflow.add_node("profile", profile_with_state)

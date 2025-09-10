@@ -13,7 +13,7 @@ from llm.prompts import (
     format_analysis_prompt,
     _format_analysis_for_llm,
 )
-
+import copy
 from utils.timing import time_it, time_it_async
 from utils.analysis_dependency import DependencyAnalyzer
 from utils.analysis_isomorphism import ViTIsomorphicAnalyzer
@@ -491,7 +491,7 @@ class AnalysisAgent:
 
         except Exception as e:
             print(f"[❌] Enhanced CNN strategy generation failed: {e}")
-            return self._create_emergency_cnn_fallback_strategy(target_ratio, model_name, dataset, str(e))
+            return self._create_emergency_cnn_fallback_strategy(target_ratio, model_name, dataset, str(e), state)
 
 
     async def _llm_calculate_cnn_strategy_with_enhanced_learning(
@@ -740,7 +740,10 @@ class AnalysisAgent:
                 print(f"[🔄] CNN STRATEGY REPETITION DETECTED:")
                 print(f"   Previous: channel={used_channel_ratio:.4f}, round_to={used_round_to}, importance={used_importance}")
                 print(f"   Proposed: channel={proposed_channel_ratio:.4f}, round_to={proposed_round_to}, importance={proposed_importance}")
-                print(f"   Previous result: {achieved*100:.1f}% (target: {target*100:.1f}%)")
+                if achieved is not None and target is not None:
+                    print(f"   Previous result: {achieved*100:.1f}% (target: {target*100:.1f}%)")
+                else:
+                    print(f"   Previous result: achieved={achieved}, target={target}")
                 return True, entry
         
         return False, None
@@ -923,7 +926,7 @@ class AnalysisAgent:
             }
 
     # ADD: Emergency CNN fallback
-    def _create_emergency_cnn_fallback_strategy(self, target_ratio, model_name, dataset, error_msg):
+    def _create_emergency_cnn_fallback_strategy(self, target_ratio, model_name, dataset, error_msg, state):
         """
         Emergency fallback when both CNN LLM methods fail
         """
@@ -945,6 +948,8 @@ class AnalysisAgent:
             emergency_round_to = 4
         
         print(f"[🔧] Emergency CNN fallback: channel={emergency_channel:.4f}, {emergency_importance}, round_to={emergency_round_to}")
+
+        extended_search_remaining = state.get('extended_search_remaining')
         
         return {
             "importance_criterion": emergency_importance,
@@ -954,7 +959,8 @@ class AnalysisAgent:
             "rationale": f"Emergency fallback for {model_name} on {dataset}. All LLM methods failed: {error_msg}",
             "architecture_type": "cnn",
             "emergency_fallback": True,
-            "llm_failed": True
+            "llm_failed": True,
+            "extended_search_remaining": extended_search_remaining
         }
 
     async def _llm_calculate_cnn_strategy_with_guidance(
@@ -1474,7 +1480,7 @@ class AnalysisAgent:
             print(f"[❌] ViT strategy generation failed: {e}")
             print(f"[🔄] Using emergency fallback")
             # Emergency fallback (keep signature)
-            return self._create_emergency_vit_fallback_strategy(target_ratio, model_name, dataset, str(e))
+            return self._create_emergency_vit_fallback_strategy(target_ratio, model_name, dataset, str(e), state)
 
         
     async def _llm_calculate_vit_strategy_with_history(
@@ -2731,7 +2737,7 @@ class AnalysisAgent:
                 "fallback_used": True
             }      
 
-    def _create_emergency_vit_fallback_strategy(self, target_ratio, model_name, dataset, error_msg, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
+    def _create_emergency_vit_fallback_strategy(self, target_ratio, model_name, dataset, error_msg, state, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
         """
         Emergency fallback when both ViT LLM methods fail
         REASON: Provide ultra-safe fallback to prevent complete system failure (MACs-first mindset)
@@ -2755,6 +2761,8 @@ class AnalysisAgent:
         print(f"[🔧] Emergency ViT fallback: mlp={emergency_mlp:.3f}, qkv={emergency_qkv:.3f}, "
             f"{emergency_importance}, round_to={emergency_round_to} (tol +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
 
+        extended_search_remaining = state.get('extended_search_remaining')
+
         return {
             "importance_criterion": emergency_importance,
             "pruning_ratio": target_ratio,
@@ -2775,7 +2783,8 @@ class AnalysisAgent:
                 "head_multiplier": 0.0
             },
             "emergency_fallback": True,
-            "llm_failed": True
+            "llm_failed": True,
+            "extended_search_remaining": extended_search_remaining
         }
 
     def _format_history_for_llm(self, history, target_ratio, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0):
