@@ -119,12 +119,12 @@ def create_pruning_workflow():
             if calculated_baseline is not None:
                 result['baseline_macs'] = calculated_baseline
                 GLOBAL_STATE['baseline_macs'] = calculated_baseline
-                print(f"[SUCCESS] Extracted baseline_macs: {calculated_baseline/1e9:.3f}G")
+                # print(f"[SUCCESS] Extracted baseline_macs: {calculated_baseline/1e9:.3f}G")
             else:
-                print(f"[ERROR] Profile results contain None baseline_macs")
+                pass    # print(f"[ERROR] Profile results contain None baseline_macs")
         else:
-            print(f"[ERROR] No baseline_macs found in profile_results")
-            print(f"[DEBUG] profile_results keys: {result_profile.keys() if result_profile else 'No profile_results'}")
+            pass    # print(f"[ERROR] No baseline_macs found in profile_results")
+                    # print(f"[DEBUG] profile_results keys: {result_profile.keys() if result_profile else 'No profile_results'}")
 
         GLOBAL_STATE.update(result)
         return result
@@ -136,12 +136,12 @@ def create_pruning_workflow():
         state = deep_merge(state, GLOBAL_STATE)
 
         dataset = state.get('dataset', 'cifar10')
-        print(f"[🔄] Enhanced analyzing {dataset} pruning strategy with proper role separation")
+        # print(f"[🔄] Enhanced analyzing {dataset} pruning strategy with proper role separation")
 
         # FIX: Ensure model_name is preserved in state
         if 'model_name' not in state and 'model_name' in GLOBAL_STATE:
             state['model_name'] = GLOBAL_STATE['model_name']
-            print(f"[🔧] Restored model_name from global state: {state['model_name']}")
+            # print(f"[🔧] Restored model_name from global state: {state['model_name']}")
         
         # Additional fallback: extract from query if still missing
         if 'model_name' not in state or not state['model_name']:
@@ -151,7 +151,7 @@ def create_pruning_workflow():
             if match:
                 state['model_name'] = match.group(1)
                 GLOBAL_STATE['model_name'] = state['model_name']
-                print(f"[🔧] Extracted and saved model_name from query: {state['model_name']}")
+                # print(f"[🔧] Extracted and saved model_name from query: {state['model_name']}")
 
         # Ensure MAC-based targets are preserved
         if 'target_macs' in GLOBAL_STATE:
@@ -237,7 +237,7 @@ def create_pruning_workflow():
                 print(f"[📋] Master Agent directives: {directives}")
         
         # ANALYSIS AGENT: Calculate specific parameters based on guidance (if any) and historical learning
-        print(f"[🧮] Analysis Agent calculating specific parameters for {dataset}...")
+        # print(f"[🧮] Analysis Agent calculating specific parameters for {dataset}...")
         result = await AnalysisAgent(llm=shared_llm).analyze(state)
 
         # Verify Analysis Agent followed guidance (if provided)
@@ -253,11 +253,13 @@ def create_pruning_workflow():
                 chosen_combo = (chosen_importance, chosen_round_to)
                 
                 if chosen_combo in avoid_combinations:
-                    print(f"[⚠️] WARNING: Analysis Agent chose avoided combination {chosen_combo}")
-                    print(f"[⚠️] This may indicate guidance interpretation failed")
+                    pass
+                    # print(f"[⚠️] WARNING: Analysis Agent chose avoided combination {chosen_combo}")
+                    # print(f"[⚠️] This may indicate guidance interpretation failed")
                 else:
-                    print(f"[✅] Analysis Agent successfully avoided failed combinations")
-                    print(f"[✅] Chosen combination: {chosen_combo} (not in avoided list)")
+                    pass
+                    # print(f"[✅] Analysis Agent successfully avoided failed combinations")
+                    # print(f"[✅] Chosen combination: {chosen_combo} (not in avoided list)")
 
         # Make sure critical values propagate (MAC-first)
         if 'target_macs' in state:
@@ -481,9 +483,9 @@ def create_pruning_workflow():
         
         # ✅ CRITICAL: Handle state modifications properly
         if stop_reason == "initialize_phase2":
-            state['extended_search_remaining'] = 10
-            GLOBAL_STATE['extended_search_remaining'] = 10  # Also update global state
-            print(f"[🔧] Initialized extended_search_remaining = 10")
+            state['extended_search_remaining'] = 30
+            GLOBAL_STATE['extended_search_remaining'] = 30  # Also update global state
+            print(f"[🔧] Initialized extended_search_remaining = 30")
             continue_optimization = True
             stop_reason = None
         elif stop_reason == "continue_phase2":
@@ -591,7 +593,7 @@ def create_pruning_workflow():
             target_mac = pruning_res.get('target_macs', target_macs)
             
             target_mac_str = f"{target_mac/1e9:.3f}G" if isinstance(target_mac, (int, float)) and target_mac > 0 else f"{target_mac}G"
-            print(f"[DEBUG] In {dataset} prune_with_state: |{achieved_macs/1e9:.3f}G - {target_mac_str}|")
+            # print(f"[DEBUG] In {dataset} prune_with_state: |{achieved_macs/1e9:.3f}G - {target_mac_str}|")
 
             # Calculate MAC error percentage
             if achieved_macs and target_mac and target_mac > 0:
@@ -720,11 +722,12 @@ def create_pruning_workflow():
         # Store fine-tuned model back in MODEL_STORE
         if 'fine_tuning_results' in result and 'model' in result['fine_tuning_results']:
             MODEL_STORE = result['fine_tuning_results']['model']
+            print(f"[💾] Stored fine-tuned model in MODEL_STORE (backup)")
             # Remove model from state to avoid serialization issues
-            checkpoint_path = result['fine_tuning_results'].get('checkpoint_path', 'unknown_path.pth')
-            metrics = {k: v for k, v in result['fine_tuning_results'].items() 
-                      if k not in ['model']}
-            result['fine_tuning_results'] = metrics
+            # checkpoint_path = result['fine_tuning_results'].get('checkpoint_path', 'unknown_path.pth')
+            # metrics = {k: v for k, v in result['fine_tuning_results'].items() 
+                      # if k not in ['model']}
+            # result['fine_tuning_results'] = metrics
 
         GLOBAL_STATE.update(result)
         return result
@@ -737,25 +740,20 @@ def create_pruning_workflow():
         dataset = state.get('dataset', 'cifar10')
         print(f"[🔄] Evaluating {dataset} model")
 
-        # Ensure model_name and dataset info is present
+        # Ensure model_name is present
         if 'model_name' not in state and 'model_name' in GLOBAL_STATE:
             state['model_name'] = GLOBAL_STATE['model_name']
 
-        # ✅ FIX 8: Only inject fine-tuned model if fine-tuning occurred
-        if MODEL_STORE is not None and 'fine_tuning_results' in state:
-            if 'fine_tuning_results' not in state:
-                state['fine_tuning_results'] = {}
-            state['fine_tuning_results']['model'] = MODEL_STORE
-            print(f"[💾] Using fine-tuned model for evaluation")
-        else:
-            print(f"[💾] No fine-tuned model available, using stored results only")
-
-        # Use the fixed EvaluationAgent
+        # Use the EvaluationAgent
         result = await EvaluationAgent(llm=shared_llm).evaluate(state)
 
-        # Preserve model_name and dataset info in the result
+        # Preserve critical info in result
         if 'model_name' in state:
             result['model_name'] = state['model_name']
+        
+        # Propagate updated history with fine-tuned accuracies
+        if 'history' in state:
+            result['history'] = state['history']
 
         GLOBAL_STATE.update(result)
         return result
@@ -1052,10 +1050,10 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
         max_revisions = 5  # Fewer revisions due to computational cost
         
         # ADD: ImageNet subset message
-        if imagenet_subset < 1.0:
-            print(f"\n[🔬] ImageNet TESTING MODE: Using {imagenet_subset*100:.1f}% of training data")
-            print(f"[⚡] Expected speedup: ~{1/imagenet_subset:.1f}x faster")
-            print(f"[⚠️] Results are for testing/debugging - use full dataset for production")
+        # if imagenet_subset < 1.0:
+        #     print(f"\n[🔬] ImageNet TESTING MODE: Using {imagenet_subset*100:.1f}% of training data")
+        #     print(f"[⚡] Expected speedup: ~{1/imagenet_subset:.1f}x faster")
+        #     print(f"[⚠️] Results are for testing/debugging - use full dataset for production")
     else:  # CIFAR-10
         num_classes = 10
         input_size = 224  # We resize CIFAR-10 to 224x224
@@ -1204,9 +1202,9 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
         initial_state['model_name'] = model_name
         GLOBAL_STATE['model_name'] = model_name
         
-        print(f"\n[📋] Initial {dataset} state keys:", initial_state.keys())
-        print(f"[📋] Model name in initial state: {initial_state.get('model_name')}")
-        print(f"[📋] Model name in global state: {GLOBAL_STATE.get('model_name')}")
+        # print(f"\n[📋] Initial {dataset} state keys:", initial_state.keys())
+        # print(f"[📋] Model name in initial state: {initial_state.get('model_name')}")
+        # print(f"[📋] Model name in global state: {GLOBAL_STATE.get('model_name')}")
         
         workflow = create_pruning_workflow()
         graph = workflow.compile()
@@ -1250,8 +1248,8 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
             if 'model_name' not in GLOBAL_STATE or not GLOBAL_STATE['model_name']:
                 GLOBAL_STATE['model_name'] = model_name
                 
-            print(f"[🔍] Current {dataset} global state keys:", GLOBAL_STATE.keys())
-            print(f"[🔍] Model name in global state: {GLOBAL_STATE.get('model_name')}")
+            # print(f"[🔍] Current {dataset} global state keys:", GLOBAL_STATE.keys())
+            # print(f"[🔍] Model name in global state: {GLOBAL_STATE.get('model_name')}")
 
             # Log step-specific metrics if available
             if 'pruning_results' in step:
@@ -1285,7 +1283,8 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
                 break
 
             if MODEL_STORE is not None:
-                print(f"[💾] {dataset} model in store:", type(MODEL_STORE))
+                # print(f"[💾] {dataset} model in store:", type(MODEL_STORE))
+                pass
                 
             step_count += 1
 
@@ -1328,10 +1327,10 @@ async def run_pruning_workflow(model_name: str, query: str, dataset: str = "cifa
             wandb.log(final_wandb_metrics)
         
         print(f"[📊] Total workflow steps: {step_count}")
-        print(f"[💾] Final state keys: {list(GLOBAL_STATE.keys())}")
+        # print(f"[💾] Final state keys: {list(GLOBAL_STATE.keys())}")
 
         # Save final best model
-        print("[💾] Saving final best model...")
+        # print("[💾] Saving final best model...")
 
         if MODEL_STORE is not None:
             prune_section = GLOBAL_STATE.get('prune')

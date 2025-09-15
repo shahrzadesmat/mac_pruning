@@ -149,19 +149,19 @@ class FineTuningAgent:
             if model.head.out_features != num_classes:
                 in_features = model.head.in_features
                 model.head = nn.Linear(in_features, num_classes).to(device)
-                print(f"[🔧] Fixed classification head: {in_features} -> {num_classes} classes")
+                # print(f"[🔧] Fixed classification head: {in_features} -> {num_classes} classes")
                 
         elif hasattr(model, 'fc') and isinstance(model.fc, nn.Linear):
             if model.fc.out_features != num_classes:
                 in_features = model.fc.in_features
                 model.fc = nn.Linear(in_features, num_classes).to(device)
-                print(f"[🔧] Fixed FC layer: {in_features} -> {num_classes} classes")
+                # print(f"[🔧] Fixed FC layer: {in_features} -> {num_classes} classes")
                 
         elif hasattr(model, 'classifier') and isinstance(model.classifier, nn.Linear):
             if model.classifier.out_features != num_classes:
                 in_features = model.classifier.in_features
                 model.classifier = nn.Linear(in_features, num_classes).to(device)
-                print(f"[🔧] Fixed classifier: {in_features} -> {num_classes} classes")
+                # print(f"[🔧] Fixed classifier: {in_features} -> {num_classes} classes")
 
     def _get_dataset_specific_params(self, dataset: str, is_vit_model: bool):
         """Get dataset and model-specific training parameters"""
@@ -169,7 +169,7 @@ class FineTuningAgent:
         if dataset.lower() == 'imagenet':
             if is_vit_model:
                 return {
-                    'num_epochs': 1,
+                    'num_epochs': 5,
                     'learning_rate': 0.0001,
                     'weight_decay': 0.01,
                     'optimizer': 'adamw',
@@ -177,7 +177,7 @@ class FineTuningAgent:
                 }
             else:
                 return {
-                    'num_epochs': 1,
+                    'num_epochs': 5,
                     'learning_rate': 0.01,
                     'weight_decay': 5e-4,
                     'optimizer': 'sgd',
@@ -186,7 +186,7 @@ class FineTuningAgent:
         else:  # CIFAR-10
             if is_vit_model:
                 return {
-                    'num_epochs': 1,
+                    'num_epochs': 5,
                     'learning_rate': 0.005,
                     'weight_decay': 0.05,
                     'optimizer': 'adamw',
@@ -194,7 +194,7 @@ class FineTuningAgent:
                 }
             else:
                 return {
-                    'num_epochs': 1,
+                    'num_epochs': 5,
                     'learning_rate': 0.01,
                     'weight_decay': 5e-4,
                     'optimizer': 'sgd',
@@ -252,7 +252,7 @@ class FineTuningAgent:
         data_path = state.get("data_path", "./data")
         
         print(f"\n[🔄] Starting REVISED {dataset.upper()} fine-tuning process...")
-        print(f"[🔄] Dataset: {dataset} ({num_classes} classes)")
+        # print(f"[🔄] Dataset: {dataset} ({num_classes} classes)")
 
         # Check for pruning success
         pruning_success = (
@@ -312,11 +312,11 @@ class FineTuningAgent:
                 base_lr = 0.001 if achieved_ratio < 0.1 else 0.0005
             
             print(f"[🔧] Using LR {base_lr} for {achieved_ratio:.1%} pruned model")
-            print(f"[⚙️] User set epochs: {num_epochs}")
+            # print(f"[⚙️] User set epochs: {num_epochs}")
             
             # FIX: Setup data loaders EARLY
             train_loader, val_loader = self._setup_dataset_loaders(dataset, data_path, 64)
-            print(f"[📊] Setup data loaders: {len(train_loader)} train, {len(val_loader)} val")
+            # print(f"[📊] Setup data loaders: {len(train_loader)} train, {len(val_loader)} val")
             
             # Setup optimizer
             if is_vit_model:
@@ -454,7 +454,7 @@ class FineTuningAgent:
                 'timestamp': datetime.now().isoformat()
             }, checkpoint_path)
 
-            print(f"[💾] Saved fine-tuned checkpoint: {checkpoint_path}")
+            # print(f"[💾] Saved fine-tuned checkpoint: {checkpoint_path}")
             
             # Return results
             return {

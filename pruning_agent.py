@@ -31,6 +31,7 @@ from utils.analysis_structures import (
 )
 from utils.analysis_isomorphism import IsomorphicGroup
 from utils.logging_wandb import log_to_wandb
+from utils.model_factory import get_model
 
 
 class PruningAgent:
@@ -40,6 +41,7 @@ class PruningAgent:
     def get_device(self):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
     def _prepare_model(self, model_name: str, device: torch.device, dataset: str = "cifar10", num_classes: int = 10):
         """Enhanced model preparation with support for new architectures"""
         
@@ -48,16 +50,16 @@ class PruningAgent:
         
         if dataset.lower() == 'imagenet':
             try:
-                model = timm.create_model(model_name_normalized, pretrained=True, num_classes=num_classes)
-                print(f"[🔧] Created ImageNet model: {model_name_normalized} with pretrained weights")
+                model = get_model(model_name_normalized, num_classes, pretrained=True)
+                # print(f"[🔧] Created ImageNet model: {model_name_normalized} with pretrained weights")
             except Exception as e:
-                print(f"[⚠️] Failed to create {model_name_normalized} with pretrained weights: {e}")
+                # print(f"[⚠️] Failed to create {model_name_normalized} with pretrained weights: {e}")
                 # Try without pretrained
-                model = timm.create_model(model_name_normalized, pretrained=False, num_classes=num_classes)
-                print(f"[🔧] Created ImageNet model: {model_name_normalized} without pretrained weights")
+                model = get_model(model_name_normalized, num_classes, pretrained=False)
+                # print(f"[🔧] Created ImageNet model: {model_name_normalized} without pretrained weights")
         else:
-            model = timm.create_model(model_name_normalized, pretrained=False, num_classes=num_classes)
-            print(f"[🔧] Created {dataset} model: {model_name_normalized}")
+            model = get_model(model_name_normalized, num_classes, pretrained=False)
+            # print(f"[🔧] Created {dataset} model: {model_name_normalized}")
         
         for param in model.parameters():
             param.requires_grad = True
@@ -89,7 +91,7 @@ class PruningAgent:
             model.train()
             model.zero_grad()
             
-            print(f"[🧮] Calculating Taylor importance using gradient accumulation...")
+            # print(f"[🧮] Calculating Taylor importance using gradient accumulation...")
             for batch_idx, batch in enumerate(loader):
                 if batch_idx >= 100:  # Limit batches for efficiency
                     break
@@ -108,21 +110,21 @@ class PruningAgent:
                 loss = criterion(outputs, targets)
                 loss.backward()
                 
-            print(f"[🧮] Taylor importance calculation complete")
+            # print(f"[🧮] Taylor importance calculation complete")
             return tp.importance.TaylorImportance()
             
         elif importance_type == "l1norm":
-            print(f"[🧮] Using L1 norm importance (no gradient computation needed)")
+            # print(f"[🧮] Using L1 norm importance (no gradient computation needed)")
             return tp.importance.MagnitudeImportance(p=1)
         elif importance_type == "l2norm":
-            print(f"[🧮] Using L2 norm importance (no gradient computation needed)")
+            # print(f"[🧮] Using L2 norm importance (no gradient computation needed)")
             return tp.importance.MagnitudeImportance(p=2)
         else:
-            print(f"[⚠️] Unknown importance type: {importance_type}, falling back to taylor")
+            # print(f"[⚠️] Unknown importance type: {importance_type}, falling back to taylor")
             return tp.importance.TaylorImportance()
 
     def _setup_dataset_loader(self, dataset: str, data_path: str, batch_size: int = 64):
-        """Setup dataset-appropriate data loader with fixed ImageNet folder handling"""
+        """Setup dataset-appropriate data loader with caching handled by loaders.py"""
         
         if dataset.lower() == 'imagenet':
             # Get subset fraction from state
@@ -135,8 +137,6 @@ class PruningAgent:
             train_loader, val_loader = get_cifar10_loaders_pbench(batch_size, num_workers=16)
             return train_loader, val_loader
 
-
-
     def _setup_ignored_layers(self, model, num_classes: int, dataset: str):
         """Enhanced ignored layers setup for new architectures"""
         ignored_layers = []
@@ -147,19 +147,19 @@ class PruningAgent:
             if (('fc' in name) or ('classifier' in name) or ('head' in name)) and isinstance(m, nn.Linear):
                 if m.out_features == num_classes:
                     ignored_layers.append(m)
-                    print(f"[🔒] Preserving final classifier: {name} ({num_classes} classes)")
+                    # print(f"[🔒] Preserving final classifier: {name} ({num_classes} classes)")
             
             # ConvNext-specific layer preservation
             if 'convnext' in self.model_name.lower():
                 # Preserve layer normalization layers
                 if isinstance(m, (nn.LayerNorm, nn.GroupNorm)):
                     ignored_layers.append(m)
-                    print(f"[🔒] Preserving ConvNext normalization: {name}")
+                    # print(f"[🔒] Preserving ConvNext normalization: {name}")
                 
                 # Preserve depthwise convolutions (critical for ConvNext)
                 if isinstance(m, nn.Conv2d) and m.groups == m.in_channels:
                     ignored_layers.append(m)
-                    print(f"[🔒] Preserving ConvNext depthwise conv: {name}")
+                    # print(f"[🔒] Preserving ConvNext depthwise conv: {name}")
             
             # Standard attention handling
             if isinstance(m, timm.models.swin_transformer.WindowAttention):
@@ -432,7 +432,7 @@ class PruningAgent:
         input_size = state.get("input_size", 224)
         data_path = state.get("data_path", "./data")
         
-        print(f"[🔧] Pruning for {dataset}: {num_classes} classes, {input_size}x{input_size}")
+        # print(f"[🔧] Pruning for {dataset}: {num_classes} classes, {input_size}x{input_size}")
 
         # Extract model name
         model_name = state.get("model_name")
@@ -441,7 +441,7 @@ class PruningAgent:
             match = re.search(r'Prune\s+(\w+(?:_\w+)*)\s+model', query)
             if match:
                 model_name = match.group(1)
-                print(f"[📋] Extracted model name from query: {model_name}")
+                # print(f"[📋] Extracted model name from query: {model_name}")
             else:
                 raise ValueError("Model name is missing and couldn't be parsed from query.")
                 
@@ -460,12 +460,13 @@ class PruningAgent:
                 any(cnn_type in model_name.lower() for cnn_type in cnn_types)))
 
         if is_cnn:
-            print(f"[🔍] Detected CNN/ConvNext architecture: {model_name}")
-            print(f"[🔄] Routing to enhanced CNN pruning method...")
+            # print(f"[🔍] Detected CNN/ConvNext architecture: {model_name}")
+            # print(f"[🔄] Routing to enhanced CNN pruning method...")
             return await self._execute_cnn_pruning(state, model_name)
         else:
-            print(f"[🔍] Detected ViT/Transformer architecture: {model_name}")
-            print(f"[🔄] Using existing ViT pruning method...")
+            pass
+            # print(f"[🔍] Detected ViT/Transformer architecture: {model_name}")
+            # print(f"[🔄] Using existing ViT pruning method...")
 
 
         analysis_results = state.get("analysis_results", {})
@@ -608,10 +609,10 @@ class PruningAgent:
                 
             train_loader, val_loader = self._setup_dataset_loader(dataset, data_path, batch_size)
             criterion = nn.CrossEntropyLoss().to(device)
-            print(f"[📊] Setup {dataset} data loader with batch size {batch_size}")
+            # print(f"[📊] Setup {dataset} data loader with batch size {batch_size}")
 
         except Exception as e:
-            print(f"[❌] Failed to setup data loader: {e}")
+            # print(f"[❌] Failed to setup data loader: {e}")
             return {**state, 'error': f'Data loader setup failed: {str(e)}'}
 
         # Tracking variables
@@ -631,7 +632,7 @@ class PruningAgent:
             base_macs, _ = tp.utils.count_ops_and_params(temp_model, example_inputs)
             target_ratio = 1.0 - (target_macs / base_macs)
             del temp_model
-            print(f"[🔄] Calculated target ratio from MACs: {target_ratio:.4f}")
+            # print(f"[🔄] Calculated target ratio from MACs: {target_ratio:.4f}")
 
         # Now target_ratio is guaranteed to exist
         current_ratio = target_ratio
@@ -885,7 +886,7 @@ class PruningAgent:
         else:
             print(f"TRUE Zero-shot accuracy: {zero_shot_accuracy:.2f}%")
         
-        print(f"Model saved to: {checkpoint_path}")
+        # print(f"Model saved to: {checkpoint_path}")
 
         # Update attempted ratios in state
         state['attempted_pruning_ratios'] = attempted_ratios
@@ -928,7 +929,7 @@ class PruningAgent:
         # LEARNING-FIRST APPROACH: Use Analysis Agent or conservative fallback
         if channel_pruning_ratio is not None:
             print(f"[✅] Using Analysis Agent's learned channel ratio: {channel_pruning_ratio:.4f}")
-            print(f"[✅] This includes historical learning corrections")
+            # print(f"[✅] This includes historical learning corrections")
         else:
             # Simple conservative fallback - let Analysis Agent learn the real relationship
             if target_ratio is not None:
@@ -1175,7 +1176,7 @@ class PruningAgent:
             for group_name, group in groups.items():
                 # ✅ FIX: Check for empty layers first
                 if len(group.layers) == 0:
-                    print(f"[⚠️] Skipping {group_name}: no layers found")
+                    # print(f"[⚠️] Skipping {group_name}: no layers found")
                     continue
                     
                 # ✅ FIX: Use the pre-calculated pruning_ratio directly (don't recalculate from MAC)
@@ -1183,7 +1184,7 @@ class PruningAgent:
                 
                 # ✅ FIX: Only skip if ratio is actually zero or negative
                 if pruning_ratio <= 0.0:
-                    print(f"[⚠️] Skipping {group_name}: pruning ratio is {pruning_ratio:.3f}")
+                    # print(f"[⚠️] Skipping {group_name}: pruning ratio is {pruning_ratio:.3f}")
                     continue
                     
                 # ✅ FIX: Add detailed debug info
@@ -1226,6 +1227,11 @@ class PruningAgent:
     def _prune_mlp_couples(self, group: IsomorphicGroup):
         """Prune MLP couples while maintaining fc1.out == fc2.in"""
         
+        # Track counts and dimensions before the loop
+        self._mlp_prune_count = 0
+        original_hidden = None
+        target_hidden = None
+        
         for mlp_couple in group.layers:
             if not isinstance(mlp_couple, MLPCouple):
                 continue
@@ -1238,7 +1244,8 @@ class PruningAgent:
             original_hidden = mlp_couple.get_hidden_dim()
             target_hidden = max(1, int(original_hidden * (1 - group.pruning_ratio)))
             
-            print(f"[🔧] MLP {original_hidden} -> {target_hidden}")
+            # Count successful prunings
+            self._mlp_prune_count += 1
             
             # Compute joint importance for both layers
             importance = self._compute_mlp_couple_importance(mlp_couple)
@@ -1253,6 +1260,11 @@ class PruningAgent:
             # Validate after update
             if not mlp_couple.validate_coupling():
                 raise RuntimeError(f"MLP couple broken after pruning: {mlp_couple.fc1_name}")
+        
+        # Print summary ONCE after all pruning is complete
+        if self._mlp_prune_count > 0:
+            print(f"[🔧] Pruning {self._mlp_prune_count} MLP layers: {original_hidden} -> {target_hidden} channels each")
+
 
     def _compute_mlp_couple_importance(self, mlp_couple: MLPCouple):
         """Compute joint importance for fc1+fc2 pair"""
@@ -1303,6 +1315,11 @@ class PruningAgent:
         """Prune attention couples while maintaining qkv.out//3 == proj.in"""
         
         print(f"[🔧] Pruning {len(group.layers)} attention couples")
+
+        # Track dimensions
+        original_embed = None
+        target_embed = None
+        self._attention_update_count = 0
         
         for attn_couple in group.layers:
             if not isinstance(attn_couple, AttentionCouple):
@@ -1315,11 +1332,9 @@ class PruningAgent:
             
             original_embed = attn_couple.get_embed_dim()
             target_embed = max(1, int(original_embed * (1 - group.pruning_ratio)))
-            
-            # Ensure target_embed is divisible by num_heads (if available)
             target_embed = self._adjust_embed_dim_for_heads(attn_couple, target_embed)
-            
-            print(f"[🔧] Attention {original_embed} -> {target_embed}")
+
+            # REMOVE: print(f"[🔧] Attention {original_embed} -> {target_embed}")
             
             # Compute joint importance for QKV and projection
             importance = self._compute_attention_couple_importance(attn_couple)
@@ -1335,6 +1350,17 @@ class PruningAgent:
             if not attn_couple.validate_coupling():
                 raise RuntimeError(f"Attention couple broken after pruning: {attn_couple.qkv_name}")
 
+        # MOVE: Print summary ONCE after the loop completes
+        if self._attention_update_count > 0:
+            summary_msg = f"[🔧] Pruned {self._attention_update_count} attention layers: {original_embed} -> {target_embed} embed_dim (head_dim=1)"
+            
+            # Add adjustment info if any adjustments were made
+            if hasattr(self, '_embed_adjustment_count') and self._embed_adjustment_count > 0:
+                old_target, new_target, heads = self._embed_adjustment_details
+                summary_msg += f"\n[🔧] Adjusted {self._embed_adjustment_count} layers: embed_dim {old_target} -> {new_target} for {heads} heads"
+            
+            print(summary_msg)
+
     def _adjust_embed_dim_for_heads(self, attn_couple: AttentionCouple, target_embed: int):
         """Adjust target embedding dimension to be compatible with attention heads"""
         
@@ -1349,7 +1375,11 @@ class PruningAgent:
                         adjusted_embed = num_heads  # At least one dimension per head
                     
                     if adjusted_embed != target_embed:
-                        print(f"[🔧] Adjusted embed_dim {target_embed} -> {adjusted_embed} for {num_heads} heads")
+                        # Track adjustments instead of individual prints
+                        if not hasattr(self, '_embed_adjustment_count'):
+                            self._embed_adjustment_count = 0
+                            self._embed_adjustment_details = (target_embed, adjusted_embed, num_heads)
+                        self._embed_adjustment_count += 1
                     
                     return adjusted_embed
         
@@ -1437,8 +1467,10 @@ class PruningAgent:
                     module.head_dim = new_embed_dim // module.num_heads
                     if hasattr(module, 'scale'):
                         module.scale = module.head_dim ** -0.5
-                    
-                    print(f"[🔧] Updated {name}: embed_dim={new_embed_dim}, "
-                        f"heads={module.num_heads}, head_dim={module.head_dim}")
+                    # Track attention updates
+                    if not hasattr(self, '_attention_update_count'):
+                        self._attention_update_count = 0
+                    self._attention_update_count += 1
                     break
+
 

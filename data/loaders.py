@@ -8,19 +8,43 @@ from sklearn.model_selection import train_test_split
 import pbench
 
 
+import os
+from typing import Optional, Tuple
+import torch
+from torch.utils.data import DataLoader, Subset
+from torchvision.datasets import ImageFolder
+import torchvision.transforms as T
+from sklearn.model_selection import train_test_split
+import pbench
+
+# ===================================================================
+# MODULE-LEVEL CACHE - This survives across all function calls
+# ===================================================================
+_DATASET_CACHE = {}
+
+def _create_cache_key(dataset: str, data_path: str, batch_size: int, subset_fraction: float = 1.0) -> str:
+    """Create a unique cache key for dataset loaders"""
+    return f"{dataset}_{data_path}_{batch_size}_{subset_fraction}"
 
 def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16, subset_fraction=1.0):
     """
-    DEFINITIVE working approach using your exact pbench.data.presets.ClassificationPresetEval
-    This is a 1:1 copy of your working prune_v5.py approach
+    CACHED version - will only load ImageNet once per unique configuration
     """
+    # Create cache key
+    cache_key = _create_cache_key("imagenet", data_path, batch_size, subset_fraction)
+    
+    # Check if we already have this exact configuration cached
+    if cache_key in _DATASET_CACHE:
+        # print(f"[DEBUG] Using cached ImageNet loaders: {cache_key}")
+        return _DATASET_CACHE[cache_key]
+    
+    # print(f"[DEBUG] Creating new ImageNet loaders: {cache_key}")
     print(f"[📂] Loading ImageNet from folder structure: {data_path}")
 
-        # ADD: Subset info message
+    # ADD: Subset info message
     if subset_fraction < 1.0:
         print(f"[🔬] ImageNet TESTING MODE: Using {subset_fraction*100:.1f}% of training data")
 
-    
     # Define paths
     train_dir = os.path.join(data_path, 'train')
     val_dir = os.path.join(data_path, 'val')
@@ -44,7 +68,6 @@ def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16,
     
     print('Parsing dataset...')
     
-    
     train_dst = ImageFolder(
         os.path.join(data_path, 'train'), 
         transform=pbench.data.presets.ClassificationPresetEval(
@@ -53,8 +76,6 @@ def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16,
             mean=[0.485, 0.456, 0.406] if use_imagenet_mean_std else [0.5, 0.5, 0.5],
             std=[0.229, 0.224, 0.225] if use_imagenet_mean_std else [0.5, 0.5, 0.5],
             interpolation=interpolation
-            # backend="pil",                    # Default from your presets.py
-            # use_v2=False                      # Default from your presets.py
         )
     )
     val_dst = ImageFolder(
@@ -65,8 +86,6 @@ def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16,
             mean=[0.485, 0.456, 0.406] if use_imagenet_mean_std else [0.5, 0.5, 0.5],
             std=[0.229, 0.224, 0.225] if use_imagenet_mean_std else [0.5, 0.5, 0.5],
             interpolation=interpolation
-            # backend="pil",                    # Default from your presets.py
-            # use_v2=False                      # Default from your presets.py
         )
     )
 
@@ -88,7 +107,6 @@ def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16,
     print(f"[📊] Train dataset: {len(train_dst)} images, {len(train_dst.classes if hasattr(train_dst, 'classes') else train_dst.dataset.classes)} classes")
     print(f"[📊] Val dataset: {len(val_dst)} images, {len(val_dst.classes)} classes")
 
-
     train_loader = torch.utils.data.DataLoader(
         train_dst, 
         batch_size=batch_size, 
@@ -103,19 +121,25 @@ def get_imagenet_folder_loaders_pbench(data_path, batch_size=64, num_workers=16,
     )
     
     print(f"[✅] Created pbench ImageNet loaders: {len(train_loader)} train batches, {len(val_loader)} val batches")
+    
+    # CACHE THE RESULT - This is the key fix!
+    _DATASET_CACHE[cache_key] = (train_loader, val_loader)
+    print(f"[DEBUG] Cached ImageNet loaders with key: {cache_key}")
+    
     return train_loader, val_loader
 
-def get_dataset_loaders(dataset: str, data_path: str, batch_size: int = 64, num_workers: int = 16, imagenet_subset: float = 1.0):
-    if dataset.lower() == 'imagenet':
-        return get_imagenet_folder_loaders_pbench(data_path, batch_size, num_workers, imagenet_subset)
-    elif dataset.lower() == 'cifar10':
-        return get_cifar10_loaders_pbench(batch_size, num_workers)  # No change for CIFAR-10
-    else:
-        raise ValueError(f"Unsupported dataset: {dataset}")
-
-
 def get_cifar10_loaders_pbench(batch_size=64, num_workers=16):
-    """Keep CIFAR-10 simple with standard transforms"""
+    """CACHED CIFAR-10 loaders"""
+    # Create cache key
+    cache_key = _create_cache_key("cifar10", "./data", batch_size, 1.0)
+    
+    # Check cache first
+    if cache_key in _DATASET_CACHE:
+        # print(f"[DEBUG] Using cached CIFAR-10 loaders: {cache_key}")
+        return _DATASET_CACHE[cache_key]
+    
+    # print(f"[DEBUG] Creating new CIFAR-10 loaders: {cache_key}")
+    
     from torchvision import datasets
     from torch.utils.data import DataLoader
     import torchvision.transforms as T
@@ -151,5 +175,29 @@ def get_cifar10_loaders_pbench(batch_size=64, num_workers=16):
         num_workers=num_workers, pin_memory=True
     )
 
+    # Cache the result
+    _DATASET_CACHE[cache_key] = (train_loader, val_loader)
+    #print(f"[DEBUG] Cached CIFAR-10 loaders with key: {cache_key}")
+    
     return train_loader, val_loader
 
+def get_dataset_loaders(dataset: str, data_path: str, batch_size: int = 64, num_workers: int = 16, imagenet_subset: float = 1.0):
+    """Main entry point - now with caching support"""
+    if dataset.lower() == 'imagenet':
+        return get_imagenet_folder_loaders_pbench(data_path, batch_size, num_workers, imagenet_subset)
+    elif dataset.lower() == 'cifar10':
+        return get_cifar10_loaders_pbench(batch_size, num_workers)
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset}")
+
+def clear_dataset_cache():
+    """Utility function to clear the cache if needed"""
+    global _DATASET_CACHE
+    _DATASET_CACHE.clear()
+    # print("[DEBUG] Dataset cache cleared")
+
+def get_cache_info():
+    """Utility function to see what's cached"""
+    # print(f"[DEBUG] Cache contains {len(_DATASET_CACHE)} entries:")
+    for key in _DATASET_CACHE.keys():
+        print(f"  - {key}")

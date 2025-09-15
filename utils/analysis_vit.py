@@ -80,7 +80,7 @@ class ViTLearningAnalyzer:
             # ✅ FIX: Get MAC allocation from the correct nested structure
             ratios = strategy.get('isomorphic_group_ratios', strategy)  # Fallback if nested
             if not ratios:
-                print(f"[⚠️] Skipping entry - no isomorphic ratios found")
+                # print(f"[⚠️] Skipping entry - no isomorphic ratios found")
                 continue
 
             mlp_multiplier = ratios.get('mlp_multiplier')
@@ -91,7 +91,7 @@ class ViTLearningAnalyzer:
 
         
             if mlp_multiplier is None or qkv_multiplier is None:
-                print(f"[⚠️] Skipping entry with incomplete multiplier data")
+                # print(f"[⚠️] Skipping entry with incomplete multiplier data")
                 continue
             
             # ✅ FIX: Get accuracy correctly (unchanged)
@@ -122,7 +122,7 @@ class ViTLearningAnalyzer:
         
         # ✅ FIX: Sort by revision to get chronological order (unchanged)
         attempts.sort(key=lambda x: x['revision'])
-        print(f"[📊] Extracted {len(attempts)} valid attempts in chronological order")
+        # print(f"[📊] Extracted {len(attempts)} valid attempts in chronological order")
         
         return attempts
 

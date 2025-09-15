@@ -111,7 +111,7 @@ class ViTIsomorphicAnalyzer:
         
         # ✅ ADD: Group layers by their coupled relationships with debug info
         for block_idx, block_layers in transformer_blocks.items():
-            print(f"[🔍] Block {block_idx} layers: {list(block_layers.keys())}")
+            # print(f"[🔍] Block {block_idx} layers: {list(block_layers.keys())}")
             
             # Add MLP block (fc1 + fc2 together)
             if 'fc1' in block_layers and 'fc2' in block_layers:
@@ -123,7 +123,7 @@ class ViTIsomorphicAnalyzer:
                 )
                 groups['mlp_blocks'].layers.append(mlp_couple)
                 groups['mlp_blocks'].layer_names.append(f"block_{block_idx}_mlp")
-                print(f"[✅] Added MLP couple for block {block_idx}")
+                # print(f"[✅] Added MLP couple for block {block_idx}")
             else:
                 print(f"[❌] Missing MLP layers in block {block_idx}")
             
@@ -137,7 +137,7 @@ class ViTIsomorphicAnalyzer:
                 )
                 groups['attention_blocks'].layers.append(attn_couple)
                 groups['attention_blocks'].layer_names.append(f"block_{block_idx}_attn")
-                print(f"[✅] Added Attention couple for block {block_idx}")
+                # print(f"[✅] Added Attention couple for block {block_idx}")
             else:
                 print(f"[❌] Missing Attention layers in block {block_idx}")
         
@@ -177,6 +177,7 @@ class ViTIsomorphicAnalyzer:
         """Estimate what fraction of total MACs come from MLP layers"""
         mlp_params = 0
         total_params = 0
+        mlp_layer_count = 0
         
         for name, module in self.model.named_modules():
             if isinstance(module, nn.Linear):
@@ -184,8 +185,9 @@ class ViTIsomorphicAnalyzer:
                 total_params += param_count
                 if 'mlp' in name or 'fc1' in name or 'fc2' in name:
                     mlp_params += param_count
-                    print(f"[🔍] Found MLP layer: {name} ({param_count:,} params)")
+                    mlp_layer_count += 1
         
+        print(f"[🔍] Found {mlp_layer_count} MLP layers ({mlp_params:,} total params)")
         fraction = mlp_params / max(total_params, 1) if total_params > 0 else 0.6
         print(f"[📊] MLP MAC fraction estimated: {fraction:.3f} ({mlp_params:,}/{total_params:,} params)")
         return fraction
@@ -194,6 +196,7 @@ class ViTIsomorphicAnalyzer:
         """Estimate what fraction of total MACs come from attention layers"""
         attention_params = 0
         total_params = 0
+        attention_layer_count = 0
         
         for name, module in self.model.named_modules():
             if isinstance(module, nn.Linear):
@@ -201,8 +204,9 @@ class ViTIsomorphicAnalyzer:
                 total_params += param_count
                 if 'attn' in name or 'qkv' in name or 'proj' in name:
                     attention_params += param_count
-                    print(f"[🔍] Found Attention layer: {name} ({param_count:,} params)")
+                    attention_layer_count += 1
         
+        print(f"[🔍] Found {attention_layer_count} attention layers ({attention_params:,} total params)")
         fraction = attention_params / max(total_params, 1) if total_params > 0 else 0.3
         print(f"[📊] Attention MAC fraction estimated: {fraction:.3f} ({attention_params:,}/{total_params:,} params)")
         return fraction

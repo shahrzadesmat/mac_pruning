@@ -1022,8 +1022,8 @@ class CNNLearningAnalyzer:
         ):
         """Create an enhanced prompt with comprehensive CNN learning analysis (MAC-first)."""
 
-        print(" macs_overshoot_tolerance_pct value in analysis_cnn.py is:",  macs_overshoot_tolerance_pct)
-        print(" macs_undershoot_tolerance_pct value in analysis_cnn.py is:",  macs_undershoot_tolerance_pct)
+        # print(" macs_overshoot_tolerance_pct value in analysis_cnn.py is:",  macs_overshoot_tolerance_pct)
+        # print(" macs_undershoot_tolerance_pct value in analysis_cnn.py is:",  macs_undershoot_tolerance_pct)
 
         # Get comprehensive analysis - FIXED: pass MAC parameters
         learning_analysis = self.analyze_cnn_channel_patterns(

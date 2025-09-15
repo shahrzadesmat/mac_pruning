@@ -13,8 +13,9 @@ from data.dataset_content import get_dataset_specific_content
 import timm
 import pbench
 pbench.forward_patch.patch_timm_forward()
-from ptflops import get_model_complexity_info
+# from ptflops import get_model_complexity_info
 import re
+from utils.model_factory import get_model
 
 
 class ProfilingAgent:
@@ -25,8 +26,8 @@ class ProfilingAgent:
     @time_it_async("1. MAC-aware Profiling Agent")
     async def profile_model(self, state: PruningState) -> Dict:
         """MAC-aware model structure analysis and pruning sensitivity identification."""
-        print(f"[DEBUG] State keys in profile_model: {state.keys()}")
-        print(f"[DEBUG] State type: {type(state)}")
+        # print(f"[DEBUG] State keys in profile_model: {state.keys()}")
+        # print(f"[DEBUG] State type: {type(state)}")
 
         baseline_macs = state.get("baseline_macs")
         target_macs = state.get("target_macs")
@@ -44,7 +45,7 @@ class ProfilingAgent:
         overshoot_upper_bound = (target_macs * (1 + macs_overshoot_tolerance_pct/100)) / 1e9
         undershoot_lower_bound = (target_macs * (1 - macs_undershoot_tolerance_pct/100)) / 1e9
 
-        print(f"[🔍] MAC-aware profiling of {model_name} for {dataset} ({num_classes} classes, {input_size}x{input_size})")
+        # print(f"[🔍] MAC-aware profiling of {model_name} for {dataset} ({num_classes} classes, {input_size}x{input_size})")
         baseline_str = f"{baseline_macs/1e9:.3f}G" if baseline_macs is not None else "N/A"
         target_str = f"{target_macs/1e9:.3f}G" if target_macs is not None else "N/A"
         print(f"[🔍] MAC Context: {baseline_str} → {target_str} (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
@@ -104,24 +105,23 @@ class ProfilingAgent:
             device = torch.device("cpu")  # Use CPU for profiling
             
             if is_subsequent and 'current_model' in state:
-                print("[🔍] MAC profiling the current model from state")
+                # print("[🔍] MAC profiling the current model from state")
                 model = state['current_model']
             else:
-                print(f"[🔍] Creating new model instance for MAC profiling: {model_name}")
+                # print(f"[🔍] Creating new model instance for MAC profiling: {model_name}")
                 
-                # Dataset-aware model creation
                 if dataset.lower() == 'imagenet':
                     # Use pretrained for ImageNet, with correct number of classes
-                    model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
-                    print(f"[🔍] Created ImageNet model with pretrained weights and {num_classes} classes")
+                    model = get_model(model_name, num_classes, pretrained=True)
+                    # print(f"[🔍] Created ImageNet model with pretrained weights and {num_classes} classes")
                 else:
                     # CIFAR-10 or other datasets - no pretrained weights needed
-                    model = timm.create_model(model_name, pretrained=False, num_classes=num_classes)
-                    print(f"[🔍] Created {dataset} model with {num_classes} classes")
+                    model = get_model(model_name, num_classes, pretrained=False)
+                    # print(f"[🔍] Created {dataset} model with {num_classes} classes")
                 
             # Dataset-aware input size
             example_inputs = (torch.randn(1, 3, input_size, input_size),)
-            print(f"[🔍] Using input size: {input_size}x{input_size}")
+            # print(f"[🔍] Using input size: {input_size}x{input_size}")
 
             # Calculate actual baseline MACs if not provided
             if original_baseline_macs is None:
@@ -130,10 +130,10 @@ class ProfilingAgent:
                     # TODO: Replace with fvcore/ptflops when available
                     # For now, we'll calculate it from layer analysis below
                     measured_baseline_macs = None  # Will be set after layer analysis
-                    print(f"[🔍] Will measure baseline MACs from layer analysis")
+                    # print(f"[🔍] Will measure baseline MACs from layer analysis")
             else:
                 measured_baseline_macs = original_baseline_macs
-                print(f"[🔍] Using provided baseline MACs: {measured_baseline_macs/1e9:.3f}G")
+                # print(f"[🔍] Using provided baseline MACs: {measured_baseline_macs/1e9:.3f}G")
             
             # Extract MAC-aware layer information
             layer_info = []
@@ -145,26 +145,75 @@ class ProfilingAgent:
             mac_critical_layers = []  # Layers critical for MAC efficiency
             
             # Use ptflops to get accurate model-wide MAC measurement
-            flops, params_str = get_model_complexity_info(model, (3, input_size, input_size), as_strings=True)
+            # flops, params_str = get_model_complexity_info(model, (3, input_size, input_size), as_strings=True)
 
             # Extract numeric FLOP value
-            if 'GMac' in flops:
-                flops_numeric = float(flops.replace(' GMac', '')) * 1e9
-            elif 'MMac' in flops:
-                flops_numeric = float(flops.replace(' MMac', '')) * 1e6
-            elif 'KMac' in flops:
-                flops_numeric = float(flops.replace(' KMac', '')) * 1e3
-            else:
-                numbers = re.findall(r'[\d.]+', flops)
-                flops_numeric = float(numbers[0]) * 1e9 if numbers else 10e9
+            # if 'GMac' in flops:
+            #     flops_numeric = float(flops.replace(' GMac', '')) * 1e9
+            # elif 'MMac' in flops:
+            #     flops_numeric = float(flops.replace(' MMac', '')) * 1e6
+            # elif 'KMac' in flops:
+            #     flops_numeric = float(flops.replace(' KMac', '')) * 1e3
+            # else:
+            #     numbers = re.findall(r'[\d.]+', flops)
+            #     flops_numeric = float(numbers[0]) * 1e9 if numbers else 10e9
 
-            layer_macs = flops_numeric
-            print(f"[✅] ptflops measured: {flops}, converted to MACs: {layer_macs/1e9:.3f}G")
+            # layer_macs = flops_numeric
+            # print(f"[✅] ptflops measured: {flops}, converted to MACs: {layer_macs/1e9:.3f}G")
+
+            # Check if this is a transformer model
+            is_transformer = any(x in model_name.lower() for x in ['vit', 'deit', 'swin', 'transformer'])
+
+            if is_transformer:
+                try:
+                    from ptflops import get_model_complexity_info
+                    
+                    print(f"[🔧] Using ptflops (aten backend) for transformer...")
+                    macs, params = get_model_complexity_info(
+                        model, 
+                        (3, input_size, input_size), 
+                        backend='aten',  # Important: use aten backend for transformers
+                        as_strings=False,
+                        print_per_layer_stat=False,
+                        verbose=False
+                    )
+                    
+                    layer_macs = macs
+                    print(f"[✅] ptflops (aten) measured: {layer_macs/1e9:.3f} GMACs")
+                    
+                except Exception as e:
+                    print(f"[⚠️] ptflops failed: {e}")
+                    print(f"[🔄] Using calflops for transformer...")
+                    # fallback to your existing calflops logic
+                        
+            else:
+                # Use calflops for non-transformer models (ConvNeXt, ResNet, etc.)
+                from calflops import calculate_flops
+                
+                flops, macs, params = calculate_flops(
+                    model=model,
+                    input_shape=(1, 3, input_size, input_size),
+                    transformer_tokenizer=None
+                )
+                
+                # Parse calflops string format
+                if isinstance(macs, str):
+                    if 'GMACs' in macs:
+                        macs_numeric = float(macs.replace(' GMACs', '').strip()) * 1e9
+                    elif 'MMACs' in macs:
+                        macs_numeric = float(macs.replace(' MMACs', '').strip()) * 1e6
+                    else:
+                        macs_numeric = float(macs)
+                else:
+                    macs_numeric = macs
+                    
+                layer_macs = macs_numeric
+                print(f"[✅] calflops measured: {macs_numeric/1e9:.3f} GMACs")
 
             # Build simplified layer_info for compatibility
             layer_info = [{
                 "name": "total_model", 
-                "type": "ptflops_measurement", 
+                "type": "calflops_measurement", 
                 "estimated_macs": layer_macs, 
                 "mac_percentage": 100.0
             }]
@@ -176,7 +225,7 @@ class ProfilingAgent:
             if original_baseline_macs is None:
                 measured_baseline_macs = layer_macs
                 baseline_macs_for_calc = layer_macs
-                print(f"[✅] Measured baseline MACs from ptflops: {baseline_macs_for_calc/1e9:.3f}G")
+                print(f"[✅] Measured baseline MACs from calflops: {baseline_macs_for_calc/1e9:.3f}G")
                 print(f"[✅] Measured baseline MACs from layers: {measured_baseline_macs/1e9:.3f}G")
 
             mac_distribution = {

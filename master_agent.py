@@ -265,7 +265,7 @@ class MasterAgent:
         if isomorphic_group_ratios:
             total_allocation = sum(isomorphic_group_ratios.values())
             if total_allocation > 100:
-                print(f"[⚠️] MAC allocation totals {total_allocation:.1f}% > 100%, normalizing")
+                # print(f"[⚠️] MAC allocation totals {total_allocation:.1f}% > 100%, normalizing")
                 scale_factor = 100.0 / total_allocation
                 for key in isomorphic_group_ratios:
                     isomorphic_group_ratios[key] *= scale_factor
@@ -386,20 +386,20 @@ class MasterAgent:
             raise ValueError("target_macs must be specified in state. Please provide target MAC operations (e.g., target_macs=8.8e9 for 8.8G operations)")
 
         # Add these debug lines RIGHT BEFORE the print statement:
-        print(f"[DEBUG] baseline_macs type: {type(baseline_macs)}, value: {baseline_macs}")
-        print(f"[DEBUG] target_macs type: {type(target_macs)}, value: {target_macs}")
-        print(f"[DEBUG] macs_overshoot_tolerance_pct type: {type(macs_overshoot_tolerance_pct)}, value: {macs_overshoot_tolerance_pct}")
-        print(f"[DEBUG] macs_undershoot_tolerance_pct type: {type(macs_undershoot_tolerance_pct)}, value: {macs_undershoot_tolerance_pct}")
+        # print(f"[DEBUG] baseline_macs type: {type(baseline_macs)}, value: {baseline_macs}")
+        # print(f"[DEBUG] target_macs type: {type(target_macs)}, value: {target_macs}")
+        # print(f"[DEBUG] macs_overshoot_tolerance_pct type: {type(macs_overshoot_tolerance_pct)}, value: {macs_overshoot_tolerance_pct}")
+        # print(f"[DEBUG] macs_undershoot_tolerance_pct type: {type(macs_undershoot_tolerance_pct)}, value: {macs_undershoot_tolerance_pct}")
 
-        print(f"[🧠] MAC-aware Master Agent analyzing {dataset} pruning strategy")
-        print(f"[🧠] Dataset context: {num_classes} classes, {input_size}x{input_size}, threshold: {accuracy_threshold}%")
+        # print(f"[🧠] MAC-aware Master Agent analyzing {dataset} pruning strategy")
+        # print(f"[🧠] Dataset context: {num_classes} classes, {input_size}x{input_size}, threshold: {accuracy_threshold}%")
         
         if baseline_macs is None:
             # Check if we can get it from profile_results
             profile_baseline = state.get('profile_results', {}).get('baseline_macs')
             if profile_baseline is not None:
                 baseline_macs = profile_baseline
-                print(f"[DEBUG] Retrieved baseline_macs from profile_results: {baseline_macs/1e9:.3f}G")
+                # print(f"[DEBUG] Retrieved baseline_macs from profile_results: {baseline_macs/1e9:.3f}G")
             else:
                 raise ValueError("baseline_macs not found in state or profile_results. Profiling may have failed.")
 
@@ -499,13 +499,13 @@ CRITICAL JSON OUTPUT REQUIREMENTS:
             response = await self.llm.ainvoke(messages)
             
             # Debug print the raw response
-            print(f"[DEBUG] Raw LLM response from MAC Master Agent:\n{response.content}")
+            # print(f"[DEBUG] Raw LLM response from MAC Master Agent:\n{response.content}")
             
             # Use the robust JSON parsing function
             directives_dict = parse_llm_json_response(response.content)
             
             if not directives_dict:
-                print(f"[❌] MAC Master Agent JSON parsing failed - using fallback")
+                # print(f"[❌] MAC Master Agent JSON parsing failed - using fallback")
                 return self._create_mac_fallback_response(response.content, dataset, state)
             
             # Extract MAC-specific fields with safe defaults
@@ -549,7 +549,7 @@ CRITICAL JSON OUTPUT REQUIREMENTS:
         except Exception as e:
             print(f"[❌] Error in MAC Master Agent LLM call: {e}")
             import traceback
-            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            # print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             
             # Use MAC fallback response
             return self._create_mac_fallback_response("LLM call failed", dataset, state)
@@ -862,9 +862,24 @@ CRITICAL JSON OUTPUT REQUIREMENTS:
             'overshoot_patterns': []
         }
         
+        # Track unique configs to avoid duplicates
+        seen_configs = set()
+
         for config in failed_configs:
-            # ✅ NEW: Extract complete signature including multipliers
+            # Create a unique key for deduplication
             isomorphic_group_ratios = config.get('isomorphic_group_ratios', {})
+            config_key = (
+                config['importance_criterion'],
+                config['round_to'],
+                isomorphic_group_ratios.get('mlp_multiplier'),
+                isomorphic_group_ratios.get('qkv_multiplier'),
+                config['failure_type']
+            )
+            
+            # Skip if we've already seen this exact configuration
+            if config_key in seen_configs:
+                continue
+            seen_configs.add(config_key)
             
             complete_signature = {
                 'importance_criterion': config['importance_criterion'],

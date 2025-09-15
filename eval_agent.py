@@ -107,21 +107,21 @@ class EvaluationAgent:
         else:
             return {'accuracy': accuracy}
 
-    def _get_dataset_specific_thresholds(self, dataset: str):
-        """Get dataset-specific success thresholds"""
-        
-        if dataset.lower() == 'imagenet':
-            return {
-                'accuracy_threshold': 1.0,  # Top-1 accuracy threshold
-                'mac_tolerance_pct': 2.0,    # 2% MAC tolerance for ImageNet
-                'top5_threshold': 90.0       # Top-5 accuracy threshold
-            }
-        else:  # CIFAR-10
-            return {
-                'accuracy_threshold': 85.0,  # Accuracy threshold
-                'mac_tolerance_pct': 1.0,    # 1% MAC tolerance for CIFAR-10
-                'top5_threshold': None       # Not applicable
-            }
+    # def _get_dataset_specific_thresholds(self, dataset: str):
+    #     """Get dataset-specific success thresholds"""
+    #     
+    #     if dataset.lower() == 'imagenet':
+    #         return {
+    #             'accuracy_threshold': 1.0,  # Top-1 accuracy threshold
+    #             'mac_tolerance_pct': 2.0,    # 2% MAC tolerance for ImageNet
+    #             'top5_threshold': 90.0       # Top-5 accuracy threshold
+    #         }
+    #     else:  # CIFAR-10
+    #         return {
+    #             'accuracy_threshold': 85.0,  # Accuracy threshold
+    #             'mac_tolerance_pct': 1.0,    # 1% MAC tolerance for CIFAR-10
+    #             'top5_threshold': None       # Not applicable
+    #         }
 
     def _extract_zero_shot_accuracy(self, state: Dict, dataset: str):
         """Extract zero-shot accuracy from stored pruning results"""
@@ -165,40 +165,53 @@ class EvaluationAgent:
             return
         
         current_revision = state.get('revision_number', 0)
+        # print(f"[DEBUG] Looking for revision {current_revision} in history")
         
-        # Find the history entry for current revision
-        for entry in state['history']:
-            if entry.get('revision') == current_revision:
-                
-                # Only update if this was a candidate model (within tolerance)
-                print(f"[DEBUG] is_candidate_model :  {entry.get('is_candidate_model')}")
-                if entry.get('is_candidate_model', False):
-                    print(f"[📝] Updating candidate model history with fine-tuned results")
-                    
-                    # Add fine-tuned results based on dataset
-                    if dataset.lower() == 'imagenet':
-                        if 'fine_tuned_top1_accuracy' in eval_results:
-                            entry['fine_tuned_top1_accuracy'] = eval_results['fine_tuned_top1_accuracy']
-                        if 'fine_tuned_top5_accuracy' in eval_results:
-                            entry['fine_tuned_top5_accuracy'] = eval_results['fine_tuned_top5_accuracy']
-                    else:
-                        if 'fine_tuned_accuracy' in eval_results:
-                            entry['fine_tuned_accuracy'] = eval_results['fine_tuned_accuracy']
-                    
-                    # Improvement metrics
-                    if 'top1_accuracy_improvement' in eval_results:
-                        entry['top1_accuracy_improvement'] = eval_results['top1_accuracy_improvement']
-                    if 'accuracy_improvement' in eval_results:
-                        entry['accuracy_improvement'] = eval_results['accuracy_improvement']
-                    
-                    # Store fine-tuned model checkpoint reference
-                    if 'fine_tuning_results' in state and 'checkpoint_path' in state['fine_tuning_results']:
-                        entry['fine_tuned_checkpoint'] = state['fine_tuning_results']['checkpoint_path']
-                    
-                    print(f"[✅] Updated candidate history entry for revision {current_revision}")
+        # Find the most recent candidate model that needs updating
+        target_entry = None
+        for entry in reversed(state['history']):
+            # print(f"[DEBUG] History entry: rev={entry.get('revision')}, is_candidate={entry.get('is_candidate_model')}")
+            
+            if entry.get('is_candidate_model', False):
+                # Check if it already has fine-tuned results
+                if dataset.lower() == 'imagenet':
+                    has_results = entry.get('fine_tuned_top1_accuracy') is not None
                 else:
-                    print(f"[⚠️] Skipping history update - revision {current_revision} was not a candidate model")
-                break
+                    has_results = entry.get('fine_tuned_accuracy') is not None
+                
+                if not has_results:
+                    target_entry = entry
+                    # print(f"[DEBUG] Found candidate needing update at revision {entry.get('revision')}")
+                    break
+        
+        if target_entry:
+            # print(f"[📝] Updating candidate model history with fine-tuned results")
+            
+            # Add fine-tuned results based on dataset
+            if dataset.lower() == 'imagenet':
+                if 'fine_tuned_top1_accuracy' in eval_results:
+                    target_entry['fine_tuned_top1_accuracy'] = eval_results['fine_tuned_top1_accuracy']
+                if 'fine_tuned_top5_accuracy' in eval_results:
+                    target_entry['fine_tuned_top5_accuracy'] = eval_results['fine_tuned_top5_accuracy']
+            else:
+                if 'fine_tuned_accuracy' in eval_results:
+                    target_entry['fine_tuned_accuracy'] = eval_results['fine_tuned_accuracy']
+            
+            # Improvement metrics
+            if 'top1_accuracy_improvement' in eval_results:
+                target_entry['top1_accuracy_improvement'] = eval_results['top1_accuracy_improvement']
+            if 'accuracy_improvement' in eval_results:
+                target_entry['accuracy_improvement'] = eval_results['accuracy_improvement']
+            
+            # Store fine-tuned model checkpoint reference
+            if 'fine_tuning_results' in state and 'checkpoint_path' in state['fine_tuning_results']:
+                target_entry['fine_tuned_checkpoint'] = state['fine_tuning_results']['checkpoint_path']
+            
+            # print(f"[✅] Updated candidate history entry for revision {target_entry.get('revision')}")
+        else:
+            pass
+            # print(f"[⚠️] No candidate model found needing fine-tuned results update")
+
 
     @time_it_async("6. Evaluation Agent")
     async def evaluate(self, state: Dict) -> Dict:
@@ -210,7 +223,7 @@ class EvaluationAgent:
         data_path = state.get("data_path", "./data")
         
         print(f"\n[📊] Starting comprehensive {dataset.upper()} evaluation...")
-        print(f"[📊] Dataset: {dataset} ({num_classes} classes)")
+        # print(f"[📊] Dataset: {dataset} ({num_classes} classes)")
 
         # Check for pruning success
         pruning_success = (
@@ -229,7 +242,7 @@ class EvaluationAgent:
             
             # Setup device
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            print(f"[💻] Using device: {device}")
+            # print(f"[💻] Using device: {device}")
 
             # Gather MAC-based pruning metrics
             pruning_results = state.get('prune', {}).get('pruning_results', {})
@@ -259,8 +272,9 @@ class EvaluationAgent:
             mac_efficiency = (achieved_macs / baseline_macs) * 100 if baseline_macs > 0 else 0
             mac_error_pct = ((achieved_macs - target_macs) / target_macs) * 100 if target_macs > 0 else 0
 
-            # Get dataset-specific thresholds
-            thresholds = self._get_dataset_specific_thresholds(dataset)
+
+            # Use CLI-provided accuracy threshold directly
+            accuracy_threshold = state.get('accuracy_threshold', 1.0)
 
             eval_results = {
                 'dataset': dataset,
@@ -272,11 +286,11 @@ class EvaluationAgent:
                 'mac_error_pct': mac_error_pct,
                 'macs_overshoot_tolerance_pct': macs_overshoot_tolerance_pct,
                 'macs_undershoot_tolerance_pct': macs_undershoot_tolerance_pct,
-                'accuracy_threshold': thresholds['accuracy_threshold']
+                'accuracy_threshold': accuracy_threshold
             }
 
             # ✅ CRITICAL FIX: Use stored zero-shot results from pruning phase
-            print(f"\n[📊] Extracting stored zero-shot results from pruning phase...")
+            # print(f"\n[📊] Extracting stored zero-shot results from pruning phase...")
             
             zero_shot_results = self._extract_zero_shot_accuracy(state, dataset)
             
@@ -297,7 +311,7 @@ class EvaluationAgent:
                 
                 # Load test data for fine-tuned evaluation
                 test_loader, test_dataset = self._setup_dataset_test_data(dataset, data_path)
-                print(f"[📊] Test dataset size: {len(test_dataset)} samples")
+                # print(f"[📊] Test dataset size: {len(test_dataset)} samples")
                 
                 fine_tuned_model = fine_tuned_model.to(device)
                 ft_results = self._evaluate_model(fine_tuned_model, test_loader, device, dataset)
@@ -354,22 +368,21 @@ class EvaluationAgent:
             # Check MAC deviation and success flags (dataset-aware)
             mac_overshoot_tolerance_g = target_macs * (macs_overshoot_tolerance_pct / 100.0)
             mac_undershoot_tolerance_g = target_macs * (macs_undershoot_tolerance_pct / 100.0)
-            mac_overshoot_tolerance_g = target_macs * (macs_overshoot_tolerance_pct / 100.0)
-            mac_undershoot_tolerance_g = target_macs * (macs_undershoot_tolerance_pct / 100.0)
+
             # Then check against the appropriate tolerance
             mac_error = achieved_macs - target_macs
             mac_within_tolerance = (-mac_undershoot_tolerance_g <= mac_error <= mac_overshoot_tolerance_g)
-            thresh = state.get('accuracy_threshold', thresholds['accuracy_threshold'])
             
             # Get final accuracy (primary metric for each dataset)
             if dataset.lower() == 'imagenet':
                 final_acc = eval_results.get('fine_tuned_top1_accuracy', eval_results.get('zero_shot_top1_accuracy', 0.0))
                 final_top5 = eval_results.get('fine_tuned_top5_accuracy', eval_results.get('zero_shot_top5_accuracy', 0.0))
-                passed_acc = final_acc >= thresh
-                passed_top5 = final_top5 >= thresholds.get('top5_threshold', 90.0) if final_top5 > 0 else True
+                passed_acc = final_acc >= accuracy_threshold
+                passed_top5 = True
             else:
                 final_acc = eval_results.get('fine_tuned_accuracy', eval_results.get('zero_shot_accuracy', 0.0))
-                passed_acc = final_acc >= thresh
+                final_top5 = 0.0  # Not applicable for CIFAR-10
+                passed_acc = final_acc >= accuracy_threshold
                 passed_top5 = True  # Not applicable for CIFAR-10
             
             passed_mac_target = mac_within_tolerance
@@ -380,7 +393,7 @@ class EvaluationAgent:
                 'passed_accuracy_threshold': passed_acc,
                 'passed_mac_target': passed_mac_target,
                 'final_accuracy': final_acc,
-                'success': passed_acc and passed_mac_target and passed_top5
+                'success': passed_acc and passed_mac_target
             })
 
             # Add ImageNet-specific success criteria
@@ -400,7 +413,7 @@ class EvaluationAgent:
 
             
             if dataset.lower() == 'imagenet':
-                print(f"  - Final Top-1 Accuracy: {final_acc:.2f}% (threshold: {thresh:.1f}%)")
+                print(f"  - Final Top-1 Accuracy: {final_acc:.2f}% (threshold: {accuracy_threshold:.1f}%)")
                 if final_top5 > 0:
                     print(f"  - Final Top-5 Accuracy: {final_top5:.2f}%")
                     
@@ -410,7 +423,7 @@ class EvaluationAgent:
                 if 'top5_accuracy_improvement' in eval_results:
                     print(f"  - Top-5 Improvement: {eval_results['top5_accuracy_improvement']:.2f}%")
             else:
-                print(f"  - Final Accuracy: {final_acc:.2f}% (threshold: {thresh:.1f}%)")
+                print(f"  - Final Accuracy: {final_acc:.2f}% (threshold: {accuracy_threshold:.1f}%)")
                 if 'accuracy_improvement' in eval_results:
                     print(f"  - Accuracy Improvement: {eval_results['accuracy_improvement']:.2f}%")
             

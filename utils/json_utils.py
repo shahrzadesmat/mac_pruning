@@ -60,7 +60,7 @@ def parse_llm_json_response(response_content: str) -> dict:
     import json
     import re
     
-    print(f"[DEBUG] Attempting to parse MAC-aware JSON response ({len(response_content)} chars)")
+    # print(f"[DEBUG] Attempting to parse MAC-aware JSON response ({len(response_content)} chars)")
     
     strategies = [
         # Strategy 1: Direct parsing (in case it's already clean)
@@ -85,13 +85,13 @@ def parse_llm_json_response(response_content: str) -> dict:
             if isinstance(result, dict) and result:
                 # Validate and normalize MAC-specific fields
                 result = _validate_and_normalize_mac_fields(result)
-                print(f"[✅] MAC-aware JSON parsed successfully using strategy {i}")
+                # print(f"[✅] MAC-aware JSON parsed successfully using strategy {i}")
                 return result
         except Exception as e:
-            print(f"[⚠️] Strategy {i} failed: {e}")
+            # print(f"[⚠️] Strategy {i} failed: {e}")
             continue
     
-    print(f"[❌] All JSON parsing strategies failed!")
+    # print(f"[❌] All JSON parsing strategies failed!")
     return {}
 
 def _clean_and_parse_json(content: str) -> dict:
@@ -172,7 +172,7 @@ def _extract_json_fields_regex(content: str) -> dict:
     """Extract fields using regex when JSON parsing completely fails (MAC-aware)"""
     import re
     
-    print(f"[🔧] Using MAC-aware regex field extraction as last resort")
+    # print(f"[🔧] Using MAC-aware regex field extraction as last resort")
     
     result = {}
     
@@ -242,7 +242,7 @@ def _extract_json_fields_regex(content: str) -> dict:
                 try:
                     result[key] = float(value)
                 except ValueError:
-                    print(f"[⚠️] Could not convert {key}={value} to float")
+                    # print(f"[⚠️] Could not convert {key}={value} to float")
                     continue
             elif key in ['round_to']:
                 result[key] = int(value) if value != 'null' else None
@@ -301,14 +301,15 @@ def _extract_json_fields_regex(content: str) -> dict:
         if isomorphic_group_ratios:
             result['isomorphic_group_ratios'] = isomorphic_group_ratios
     
-    print(f"[🔧] Extracted {len(result)} fields using MAC-aware regex")
+    # print(f"[🔧] Extracted {len(result)} fields using MAC-aware regex")
     
     # Validate MAC allocation if present
     if 'isomorphic_group_ratios' in result:
         mac_alloc = result['isomorphic_group_ratios']
         total_allocation = sum(mac_alloc.values())
         if total_allocation > 100:
-            print(f"[⚠️] MAC allocation totals {total_allocation:.1f}% > 100% in regex extraction")
+            # print(f"[⚠️] MAC allocation totals {total_allocation:.1f}% > 100% in regex extraction")
+            pass
     
     return result
 

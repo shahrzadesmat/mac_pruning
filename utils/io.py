@@ -90,7 +90,7 @@ async def save_final_best_model(state):
     if pruned_checkpoint and os.path.exists(pruned_checkpoint):
         try:
             ckpt = torch.load(pruned_checkpoint, map_location='cpu')
-            print(f"[DEBUG] Checkpoint keys: {list(ckpt.keys())}")
+            # print(f"[DEBUG] Checkpoint keys: {list(ckpt.keys())}")
             
             # Try different possible keys where the model might be stored
             pruned_model = (ckpt.get('complete_model') or 
@@ -101,13 +101,14 @@ async def save_final_best_model(state):
             # If still None and there's only one item, assume that's the model
             if pruned_model is None and len(ckpt.keys()) == 1:
                 pruned_model = list(ckpt.values())[0]
-                print(f"[INFO] Using single checkpoint value as model")
+                # print(f"[INFO] Using single checkpoint value as model")
             
             if pruned_model is not None:
                 checkpoint_src = pruned_checkpoint
-                print(f"[✅] Loaded pruned model object from {pruned_checkpoint}")
+                # print(f"[✅] Loaded pruned model object from {pruned_checkpoint}")
             else:
-                print(f"[⚠️] No model found in checkpoint keys: {list(ckpt.keys())}")
+                pass
+                # print(f"[⚠️] No model found in checkpoint keys: {list(ckpt.keys())}")
                 
         except Exception as e:
             print(f"[⚠️] Failed to load {pruned_checkpoint}: {e}")
@@ -133,18 +134,18 @@ async def save_final_best_model(state):
     weights_filepath = os.path.join(output_dir, weights_filename)
     
     torch.save(pruned_model.state_dict(), weights_filepath)
-    print(f"[💾] Saved model weights (state_dict): {weights_filepath}")
-    print("    ↳ Use with: model.load_state_dict(torch.load(filepath))")
-    print("    ↳ Requires: Same architecture code + model = create_model(...)")
+    # print(f"[💾] Saved model weights (state_dict): {weights_filepath}")
+    # print("    ↳ Use with: model.load_state_dict(torch.load(filepath))")
+    # print("    ↳ Requires: Same architecture code + model = create_model(...)")
     
     # 4-B: Save full model (architecture + weights) - COMPLETE but less portable
     full_filename = f"{base_filename}_full.pt"
     full_filepath = os.path.join(output_dir, full_filename)
     
     torch.save(pruned_model, full_filepath)
-    print(f"[💾] Saved full model (architecture + weights): {full_filepath}")
-    print("    ↳ Use with: model = torch.load(filepath)")
-    print("    ↳ Self-contained but environment-dependent")
+    # print(f"[💾] Saved full model (architecture + weights): {full_filepath}")
+    # print("    ↳ Use with: model = torch.load(filepath)")
+    # print("    ↳ Self-contained but environment-dependent")
     
     # 4-C: Save metadata for both formats
     metadata = {
@@ -177,14 +178,14 @@ async def save_final_best_model(state):
     with open(metadata_filepath, 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"[📋] Saved metadata: {metadata_filepath}")
+    # print(f"[📋] Saved metadata: {metadata_filepath}")
 
-    print(
-        f"\n[🎉] Model saved in TWO formats!\n"
-        f"    🔹 Weights only (recommended): {weights_filename}\n"
-        f"    🔹 Full model (complete): {full_filename}\n"
-        f"    🔹 Metadata: {metadata_filename}"
-    )
+    # print(
+    #     f"\n[🎉] Model saved in TWO formats!\n"
+    #     f"    🔹 Weights only (recommended): {weights_filename}\n"
+    #     f"    🔹 Full model (complete): {full_filename}\n"
+    #     f"    🔹 Metadata: {metadata_filename}"
+    # )
 
     # ──────────────────────────────────────────────────────────────────────────
     # 5. Update state and return

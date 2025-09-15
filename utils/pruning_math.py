@@ -31,7 +31,7 @@ def extract_mac_target(query):
         match = re.search(pattern, query, re.IGNORECASE)
         if match:
             mac_value = float(match.group(1))
-            print(f"[🔍] Found MAC target in query: {mac_value}G")
+            # print(f"[🔍] Found MAC target in query: {mac_value}G")
             return mac_value
     
     return None

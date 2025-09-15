@@ -102,7 +102,7 @@ if __name__ == "__main__":
            else (f"{args.macs_target_ratio*100:.0f}pctMAC" if args.macs_target_ratio is not None else "MAC"))
         args.wandb_name = f"{args.model}_{args.dataset}_macs{mac_tag}_{timestamp}"
     
-    print(f"[WandB] Initializing WandB run for project '{args.wandb_project}' with name '{args.wandb_name}'")
+    # print(f"[WandB] Initializing WandB run for project '{args.wandb_project}' with name '{args.wandb_name}'")
     
     wandb_config = {
         # Model and dataset info
@@ -134,7 +134,7 @@ if __name__ == "__main__":
         mode=args.wandb_mode
     )
     
-    print("[WandB] WandB initialized successfully.", flush=True)
+    # print("[WandB] WandB initialized successfully.", flush=True)
 
     # Set subset fraction
     subset_fraction = 1.0
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     else:
         query = f"Prune {args.model} to a specified MACs budget on {args.dataset.upper()}."
 
-    print(f"[🚀] Starting {args.dataset.upper()} pruning workflow with query: {query}")
+    # print(f"[🚀] Starting {args.dataset.upper()} pruning workflow with query: {query}")
     
     # Log initial configuration to WandB
     wandb.log({
@@ -177,9 +177,9 @@ if __name__ == "__main__":
         "config/final_max_revisions": args.max_revisions,
     })
 
-    print(f"[📋] Dataset: {args.dataset}")
-    print(f"[📋] Data path: {args.data_path}")
-    print(f"[📋] Accuracy threshold: {args.accuracy_threshold}%")
+    # print(f"[📋] Dataset: {args.dataset}")
+    # print(f"[📋] Data path: {args.data_path}")
+    # print(f"[📋] Accuracy threshold: {args.accuracy_threshold}%")
 
     # Validate data path for ImageNet
     if args.dataset.lower() == 'imagenet':
@@ -188,15 +188,15 @@ if __name__ == "__main__":
 
         if not os.path.isdir(train_dir) or not os.path.isdir(val_dir):
             error_msg = f"ImageNet directory structure not found in '{args.data_path}'!"
-            print(f"[❌] Error: {error_msg}")
-            print("Expected folders:")
-            print(f"  - {train_dir}")
-            print(f"  - {val_dir}")
+            # print(f"[❌] Error: {error_msg}")
+            # print("Expected folders:")
+            # print(f"  - {train_dir}")
+            # print(f"  - {val_dir}")
             wandb.log({"workflow/error": error_msg, "workflow/failed": True})
             wandb.finish()
             exit(1)
         
-        print(f"[✅] Found ImageNet train/val folders at {args.data_path}")
+        # print(f"[✅] Found ImageNet train/val folders at {args.data_path}")
 
     def setup_macs_targets(args):
         """Setup MACs targets from command line arguments"""
@@ -248,17 +248,13 @@ if __name__ == "__main__":
         # Print final model location
         if 'final_model_weights_path' in results and 'final_model_full_path' in results:
             print(f"\n[🎉] WORKFLOW COMPLETE!")
-            print(f"[📁] Model weights saved to: {results['final_model_weights_path']}")
-            print(f"[📁] Full model saved to: {results['final_model_full_path']}")
-            print(f"[📝] Metadata saved to: {results.get('final_model_metadata_path', 'N/A')}")
-            
             # Log final paths to WandB
             wandb.log({
                 "final_output/weights_path": results['final_model_weights_path'],
                 "final_output/full_model_path": results['final_model_full_path'],
                 "final_output/metadata_path": results.get('final_model_metadata_path'),
                 "final_output/directory": args.output_dir
-    })
+            })
 
         # Validate results if requested
         if args.validate:
@@ -307,15 +303,26 @@ if __name__ == "__main__":
 
         history = results.get("history", [])
 
-        # Check for systematic failure first
+        # Check for systematic failure - ONLY consider fine-tuned models
         accuracy_threshold = args.accuracy_threshold  # e.g. 1.0
-        catastrophic_count = sum(
-            1
-            for entry in history
-            if (entry.get("zero_shot_top1_accuracy",
-                        entry.get("zero_shot_accuracy", 0)) or 0) < accuracy_threshold
-        )
-        is_systematic_failure = catastrophic_count >= len(history) * 0.8
+        finetuned_models = 0
+        successful_finetuned_models = 0
+
+        for entry in history:
+            # Try common accuracy field names in order of preference
+            final_acc = (entry.get("fine_tuned_top1_accuracy") or 
+                        entry.get("fine_tuned_accuracy") or 
+                        entry.get("accuracy"))
+            
+            # Only count models that were actually fine-tuned
+            if final_acc is not None:
+                finetuned_models += 1
+                if final_acc >= accuracy_threshold:
+                    successful_finetuned_models += 1
+
+        # Systematic failure = we have fine-tuned models but none meet threshold
+        is_systematic_failure = (finetuned_models > 0 and successful_finetuned_models == 0)
+        
 
         def _entry_achieved_macs(e):
             # direct absolute MACs if present
@@ -403,23 +410,29 @@ if __name__ == "__main__":
             ft_top5 = None
             accuracy_label = "Accuracy"
 
-        # Improvements
-        if zero_shot_acc is not None and ft_acc is not None:
-            true_improvement = ft_acc - zero_shot_acc
-            relative_improvement = (ft_acc / zero_shot_acc - 1) * 100 if zero_shot_acc > 0 else float('inf')
-        else:
-            true_improvement = None
-            relative_improvement = None
 
-        print(f"[📊] Model selected by: Highest fine-tuned accuracy within MACs tolerance")
-        print(f"[📊] Model saved as: Pruned version (before fine-tuning)")
+        if ft_acc is not None and achieved_macs > 0:
+            # Check if the selected model meets both criteria
+            passes_accuracy = ft_acc >= accuracy_threshold
+            passes_mac_tolerance = _entry_achieved_macs_within_tolerance(
+                achieved_macs, target_macs, macs_overshoot_tol, macs_undershoot_tol)
+            
+            model_success = passes_accuracy and passes_mac_tolerance
+            
+            print(f"\n[✅] Selected model evaluation:")
+            print(f"  Fine-tuned accuracy: {ft_acc:.2f}% (threshold: {accuracy_threshold}%) - {'PASS' if passes_accuracy else 'FAIL'}")
+            print(f"  MAC compliance: {achieved_macs/1e9:.3f}G (target: {target_macs/1e9:.3f}G) - {'PASS' if passes_mac_tolerance else 'FAIL'}")
+            print(f"  Success criteria met: {model_success}")
+        else:
+            print(f"\n[❌] Success criteria met: False (no valid model found)")
+            model_success = False
 
         # Fix/propagate MACs if missing in top-level results (optional)
         if macs_reduction == 0 and 'pruning_results' in results:
             macs_reduction = results['pruning_results'].get('macs_reduction', 0.0)
 
         # Debug information
-        print(f"\n[🔍] DEBUG - Best Result Selection:")
+        # print(f"\n[🔍] DEBUG - Best Result Selection:")
         print(f"   Target MACs: {target_macs/1e9:.3f}G  (+{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
         print(f"   Acceptable range: {(target_macs-macs_undershoot_tol)/1e9:.3f}G to {(target_macs+macs_overshoot_tol)/1e9:.3f}G")
         if baseline_macs:
@@ -488,8 +501,8 @@ if __name__ == "__main__":
                 print("\n" + "="*70)
                 print(f"[💥] SYSTEMATIC FAILURE - {args.dataset.upper()}")
                 print("="*70)
-                print(f"❌ Model: {args.model}")
-                print(f"❌ Dataset: {args.dataset.upper()}")
+                # print(f"❌ Model: {args.model}")
+                # print(f"❌ Dataset: {args.dataset.upper()}")
                 target_macs = results.get("target_macs")
                 if target_macs:
                     print(f"❌ Target MACs: {target_macs/1e9:.2f}G (TOO AGGRESSIVE)")
@@ -547,11 +560,7 @@ if __name__ == "__main__":
                         print(f"Zero-shot Top-5 Accuracy: {zero_shot_top5:.2f}%")
                     if ft_top5 is not None:
                         print(f"Fine-tuned Top-5 Accuracy: {ft_top5:.2f}%")
-                
-                # Accuracy improvement
-                if true_improvement is not None:
-                    rel_str = f" ({relative_improvement:.2f}% relative)" if relative_improvement != float('inf') else " (∞% relative)"
-                    print(f"{accuracy_label} improvement: {true_improvement:.2f}%{rel_str}")
+
 
                 print(f"Success criteria met: {eval_results.get('success', False)}")
                 print(f"Total iterations: {results.get('revision_number', 0)}")
@@ -688,7 +697,7 @@ if __name__ == "__main__":
         wandb.log({"timing_breakdown": timing_table})
         
         # Always finish WandB run
-        print("[WandB] Finishing WandB run...")
+        # print("[WandB] Finishing WandB run...")
         wandb.finish()
 
 

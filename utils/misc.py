@@ -28,13 +28,13 @@ def debug_file_locations(state):
     current_dir = os.getcwd()
     job_id = os.environ.get('SLURM_JOB_ID', 'local')
     
-    print(f"\n[🔍] FILE LOCATION DEBUG:")
-    print(f"   Current working directory: {current_dir}")
-    print(f"   Job ID: {job_id}")
-    print(f"   Output directory (final models): {output_dir}")
-    print(f"   Checkpoint directory (intermediate): {checkpoint_dir}")
-    print(f"   Output dir exists: {os.path.exists(output_dir)}")
-    print(f"   Checkpoint dir exists: {os.path.exists(checkpoint_dir)}")
+    # print(f"\n[🔍] FILE LOCATION DEBUG:")
+    # print(f"   Current working directory: {current_dir}")
+    # print(f"   Job ID: {job_id}")
+    # print(f"   Output directory (final models): {output_dir}")
+    # print(f"   Checkpoint directory (intermediate): {checkpoint_dir}")
+    # print(f"   Output dir exists: {os.path.exists(output_dir)}")
+    # print(f"   Checkpoint dir exists: {os.path.exists(checkpoint_dir)}")
 
 pbench.forward_patch.patch_timm_forward()
 
