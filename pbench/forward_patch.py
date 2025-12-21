@@ -1,4 +1,4 @@
-from fastcore.basics import patch_to # for monkey patching
+from fastcore.basics import patch_to
 import timm
 import torch.nn.functional as F
 
@@ -11,7 +11,6 @@ def patch_timm_forward():
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
-
         if self.fused_attn:
             x = F.scaled_dot_product_attention(
                 q, k, v,
@@ -23,7 +22,6 @@ def patch_timm_forward():
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = attn @ v
-
         # original implementation: x = x.transpose(1, 2).reshape(B, N, C), this force output dim to be C
         x = x.transpose(1, 2).reshape(B, N, -1) 
         x = self.proj(x)

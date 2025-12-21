@@ -628,17 +628,19 @@ CRITICAL JSON OUTPUT REQUIREMENTS:
                         'mac_distance_from_tolerance': max(mac_error_pct - macs_overshoot_tolerance_pct, -macs_undershoot_tolerance_pct - mac_error_pct, 0)
                     })
 
-                    print(f"[🚫] MAC CATASTROPHIC CONFIG ({failure_type}):")
-                    print(f"   Importance: {strat.get('importance_criterion')}")
+                    # print(f"[🚫] MAC CATASTROPHIC CONFIG ({failure_type}):")
+                    # print(f"   Importance: {strat.get('importance_criterion')}")
                     print(f"   Round_to: {strat.get('round_to')}")
                     isomorphic_group_ratios = strat.get('isomorphic_group_ratios', {})
                     channel_ratio = strat.get('channel_pruning_ratio')
                     if isomorphic_group_ratios:  # ViT case
-                        print(f"   QKV: {isomorphic_group_ratios.get('qkv_multiplier', 'N/A')}, MLP: {isomorphic_group_ratios.get('mlp_multiplier', 'N/A')}")
+                        pass
+                        # print(f"   QKV: {isomorphic_group_ratios.get('qkv_multiplier', 'N/A')}, MLP: {isomorphic_group_ratios.get('mlp_multiplier', 'N/A')}")
                     elif channel_ratio is not None:  # CNN case
-                        print(f"   Channel_ratio: {channel_ratio}")
-                    print(f"   Target: {target_mac/1e9:.3f}G → Achieved: {achieved_macs/1e9:.3f}G")
-                    print(f"   MAC Error: {mac_error_pct:+.2f}% (tolerance: +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
+                        pass
+                        # print(f"   Channel_ratio: {channel_ratio}")
+                    # print(f"   Target: {target_mac/1e9:.3f}G → Achieved: {achieved_macs/1e9:.3f}G")
+                    # print(f"   MAC Error: {mac_error_pct:+.2f}% (tolerance: +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
 
         if failed_configs:
             print(f"[💡] Found {len(failed_configs)} MAC catastrophic configs")

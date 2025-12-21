@@ -50,7 +50,7 @@
 #             self.api_url = "https://openrouter.ai/api/v1/chat/completions"
 #             self.headers = {
 #                 "Authorization": f"Bearer {self.api_key}",
-#                 "HTTP-Referer": "https://github.com/your-repo",
+#                 "HTTP-Referer": "https://anonymous.submission",
 #                 "X-Title": "Hyperparameter Optimization",
 #                 "Content-Type": "application/json"
 #             }
@@ -227,7 +227,7 @@ class DeepSeekLLM:
             self.api_url = "https://openrouter.ai/api/v1/chat/completions"
             self.headers = {
                 "Authorization": f"Bearer {self.api_key}",
-                "HTTP-Referer": "https://github.com/your-repo",
+                "HTTP-Referer": "https://anonymous.submission",
                 "X-Title": "Hyperparameter Optimization",
                 "Content-Type": "application/json"
             }

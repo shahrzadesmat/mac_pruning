@@ -85,7 +85,7 @@ if __name__ == "__main__":
                     help='Use 10% of ImageNet for testing (no effect on CIFAR-10)')
     parser.add_argument('--imagenet_subset', type=float, default=1.0, 
                     help='Fraction of ImageNet to use (0.1 = 10%, no effect on CIFAR-10)')
-    parser.add_argument('--output_dir', type=str, default='/work/hdd/bdjd/models', 
+    parser.add_argument('--output_dir', type=str, default='./models', 
                    help='Directory to save the final best model')
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints', 
                    help='Directory to save intermediate checkpoints')
@@ -119,7 +119,7 @@ if __name__ == "__main__":
         
         # Additional metadata
         'framework': 'torch_pruning',
-        'script_version': 'Agent_Prune_Relax',
+        'script_version': '1.0',
         'timestamp': datetime.now().isoformat(),
     }
     

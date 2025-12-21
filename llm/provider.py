@@ -1,11 +1,12 @@
 import os
 from deepseek_llm import DeepSeekLLM
 
+
 def get_llm():
-    """Returns a configured LLM instance using OpenRouter with GPT-4.5-mini"""
+    """Returns a configured LLM instance using OpenAI o3 through OpenRouter"""
     return DeepSeekLLM(
         provider="openrouter",
-        model="openai/gpt-4o-mini",  # Using GPT-4o through OpenRouter
+        model="anthropic/claude-3.5-sonnet",  # o3 through OpenRouter
         temperature=0
     )
 

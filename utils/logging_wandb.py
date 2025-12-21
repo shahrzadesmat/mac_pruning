@@ -2,8 +2,8 @@ import wandb
 
 def add_wandb_args(parser):
     """Add WandB-related arguments to the argument parser"""
-    parser.add_argument('--wandb_project', type=str, default='Pruning', 
-                       help='WandB project name')
+    parser.add_argument('--wandb_project', type=str, default='anonymous_project', 
+                        help='WandB project name (anonymous)')
     parser.add_argument('--wandb_name', type=str, default=None, 
                        help='WandB run name (auto-generated if not provided)')
     parser.add_argument('--wandb_mode', type=str, default='online', 

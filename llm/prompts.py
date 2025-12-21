@@ -1,3 +1,5 @@
+import random
+
 PROFILING_PROMPT = """You are a neural network profiling expert with MAC-based optimization expertise.
 
 Please be concise. Limit your response to 300 words or fewer.
@@ -195,13 +197,29 @@ KEY MAC ALLOCATION PARAMETERS TO CONSIDER:
    - Value between 0.0 and 1.0 (e.g., 0.5 means 50% channel reduction)
    - Higher values lead to more aggressive MAC reduction
    - CRITICAL: The channel ratio often doesn't directly translate to achieved MAC reduction due to layer dependencies. Analyze MAC history to determine the right ratio for target MAC budget.
+   - ⚠️ WARNING: MAC reduction is not linear with channel ratio due to inter-layer dependencies. Use historical MAC data to calibrate.
 
 3. MAC Allocation Strategy (for ViTs): Distribution of MAC budget across attention and MLP blocks.
    - mlp_multiplier: Pruning aggressiveness for MLP layers (higher = more pruning = fewer MACs)
    - qkv_multiplier: Pruning aggressiveness for attention layers (higher = more pruning = fewer MACs)
-   - proj_mac_percent: Pruning aggressiveness for projection layers (higher = more pruning = fewer MACs)
-   - head_mac_percent: Pruning aggressiveness for classification head (higher = more pruning = fewer MACs)
+   - proj_multiplier: Pruning aggressiveness for projection layers (higher = more pruning = fewer MACs)
+   - head_multiplier: Pruning aggressiveness for classification head (higher = more pruning = fewer MACs)
    - Total allocation should not exceed 100%
+   - Initial pruning strategy should prioritize MLP-only or MLP-heavy configurations to avoid QKV collapse. If MLP-only fails to meet the MAC target, add QKV pruning cautiously.
+
+🔒 Safety-first guidance:
+   - Start with MLP-only or MLP-heavy pruning to avoid collapsing attention.
+   - Introduce QKV pruning gradually if MAC targets are not met.
+   - Avoid configurations where `qkv.out_features < 96` or `head_dim < 8` as they can destroy model functionality.
+
+
+CRITICAL CONSTRAINTS FOR ViT PRUNING:
+
+- Do NOT prune QKV layers so aggressively that the remaining attention dimension becomes too small.
+- Attention blocks require sufficient head dimension (head_dim ≥ 8) to function properly.
+- qkv.out_features must remain ≥ 96 to preserve minimal attention capacity.
+- Excessive QKV pruning (e.g., qkv_multiplier > 0.85) often leads to catastrophic performance collapse.
+- If target MACs require extreme QKV pruning, consider shifting budget from MLP or relaxing MAC target instead.
 
 CRITICAL MULTIPLIER UNDERSTANDING:
     - In this ViT system, multipliers control pruning intensity
@@ -209,6 +227,7 @@ CRITICAL MULTIPLIER UNDERSTANDING:
     - LOWER multipliers = LESS pruning = MORE MACs (farther from target)
     - If achieved MACs > target MACs (too heavy): INCREASE multipliers
     - If achieved MACs < target MACs (too light): DECREASE multipliers
+⚠️ NOTE: For ViTs, qkv_multiplier controls attention capacity. Excessive pruning (e.g., qkv_multiplier > 0.85) may cause attention collapse and unrecoverable accuracy loss. Ensure architectural safety is preserved.
 
 4. Importance Criterion: Method for determining which components to prune for MAC efficiency.
    - "taylor": Uses second-order Taylor expansion for MAC-aware importance estimation
@@ -228,11 +247,17 @@ CRITICAL MULTIPLIER UNDERSTANDING:
    - Smaller values allow fine-grained MAC control
    - Larger values improve MAC measurement accuracy and hardware efficiency
    
+   ROUND_TO EXPLORATION: Consider round_to=2 as a viable option that may provide better accuracy. 
+   Current suggestion: {effective_round_to}, but evaluate if round_to=2 might work better for this specific case.
+   
    DATASET-SPECIFIC MAC ROUND-TO RECOMMENDATIONS:
-   - ImageNet: Use 8 or 16 for MAC measurement stability
-   - CIFAR-10: Use 4 or 8 for balanced MAC control
-   - CNNs: Larger round_to values for stable MAC calculations
-   - ViTs: Smaller round_to values for flexible MAC allocation
+   - ImageNet: Consider all values (1, 2, 4, 8, 16) - round_to=2 often provides good balance
+   - CIFAR-10: Consider all values (1, 2, 4, 8, 16) - round_to=2 often provides good balance
+   - CNNs: All round_to values are viable - don't assume larger values are always better
+   - ViTs: All round_to values are viable - round_to=2 frequently works well for attention mechanisms
+   
+   IMPORTANT: Don't default to larger round_to values without testing. Round_to=2 has shown 
+   effectiveness across different architectures and should be strongly considered.
 
 6. Global Pruning: Whether to apply MAC-aware pruning globally.
    - true: Prunes based on global MAC importance ranking
@@ -252,6 +277,17 @@ MAC STRATEGY CONSIDERATIONS:
 4. PRESERVE MAC-CRITICAL STRUCTURES: Consider layers identified as MAC-critical by the Profiling Agent.
 
 5. MAC CONVERGENCE: Look for signs of MAC budget convergence where minimal MAC efficiency improvements are being made.
+
+6. STRUCTURAL SAFETY CHECKS: Always verify that your multiplier suggestions preserve attention head functionality and architectural integrity. Avoid unsafe pruning configurations, even if they hit the MAC target.
+
+   - QKV pruning must not collapse the attention mechanism.
+   - Ensure qkv.out_features remains ≥ 96 to preserve minimal attention dimensionality (e.g., 32 per Q, K, V).
+   - Ensure head_dim remains ≥ 8 for functional multi-head attention.
+   - Avoid setting qkv_multiplier > 0.85 unless absolutely necessary.
+   - If the MAC budget requires extreme QKV pruning, consider shifting the pruning burden toward MLP instead.
+
+7. ASYMMETRIC RISK STRATEGY: MLP pruning is typically more robust than QKV pruning. If MAC budget pressure is high, shift allocation away from QKV and into MLP whenever possible.
+
 
 ARCHITECTURE DETECTION:
 Model: {model_name}
@@ -308,14 +344,14 @@ def get_cnn_analysis_content(dataset, target_macs, baseline_macs, macs_overshoot
 - Target MAC budget: {target_macs:.3f}G (efficiency: {mac_efficiency_target:.1f}% of baseline)
 - Preserve depthwise convolutions (critical for MAC efficiency)
 - Use Taylor importance (MANDATORY for MAC-accurate pruning)
-- Round-to: minimum 4 for MAC calculation stability
+- Round-to: All values (1, 2, 4, 8, 16) are viable - round_to=2 often provides good balance
 - Monitor MAC efficiency vs accuracy trade-offs carefully
 """
             guidance = f"""
 ConvNext ImageNet MAC Guidance:
+CRITICAL: Start with Taylor importance - only deviate if historical data shows Taylor failures
 - Depthwise convolutions contribute significantly to MAC count
 - Focus MAC reduction on standard convolutions, preserve depthwise
-- Use Taylor importance for MAC-aware gradient-based precision
 - Conservative round_to values (4-8) for stable MAC measurements
 - Target: {target_macs:.3f}G from {baseline_macs:.3f}G baseline
 - Monitor for MAC efficiency degradation in depthwise layers
@@ -352,11 +388,11 @@ ConvNext CIFAR-10 MAC Guidance:
 """
             guidance = f"""
 ImageNet CNN MAC Guidance:
+- CRITICAL: Use Taylor importance FIRST - only switch if historical data shows Taylor failures
 - ResNets: Focus MAC reduction on middle residual blocks, preserve early/late layers
 - Residual connections create MAC dependencies - prune input/output channels together
 - Bottleneck architectures (ResNet50+): Conservative with 1x1 conv MAC reduction
-- Use Taylor importance for MAC-aware gradient-based pruning accuracy
-- Choose round_to based on MAC measurement stability: ResNet (4-8), MobileNet (1-2), EfficientNet (2-4)
+- Round-to: All values (1, 2, 4, 8, 16) are viable - round_to=2 often provides good balance for ResNet
 - Target MAC efficiency: {mac_efficiency_target:.1f}% of baseline operations
 """
         else:
@@ -454,7 +490,7 @@ MAC-BASED REQUIREMENTS:
     }
 
 # Update the ViT content generator 
-def get_vit_analysis_content(dataset, target_macs, baseline_macs, macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct, model_name, master_suggested_round_to=None):
+def get_vit_analysis_content(dataset, target_macs, baseline_macs, macs_overshoot_tolerance_pct, macs_undershoot_tolerance_pct, model_name, master_suggested_round_to=None, state=None):
     """Generate MAC-based ViT-specific analysis content with Master Agent round_to integration"""
     
     # Calculate MAC efficiency and reduction metrics
@@ -462,7 +498,18 @@ def get_vit_analysis_content(dataset, target_macs, baseline_macs, macs_overshoot
     mac_reduction_needed = ((baseline_macs - target_macs) / baseline_macs) * 100
     tolerance_range = f"{target_macs * (1 - macs_undershoot_tolerance_pct / 100):.3f}G - {target_macs * (1 + macs_overshoot_tolerance_pct / 100):.3f}G"
     
-    effective_round_to = master_suggested_round_to if master_suggested_round_to is not None else (2 if dataset.lower() == 'imagenet' else 1)
+    # Ensure all round_to values get explored for both datasets
+    if master_suggested_round_to is not None:
+        effective_round_to = master_suggested_round_to
+    else:
+        # PRIORITIZE round_to=2 for early attempts
+        revision = state.get('revision_number', 0)
+        if revision < 3:  # First 3 attempts use round_to=2
+            effective_round_to = 2
+        else:
+            # Later attempts can explore other values
+            round_to_options = [1, 4, 8, 16, None]
+            effective_round_to = random.choice(round_to_options)
     
     if dataset.lower() == 'imagenet':
         safety_limits = f"""
@@ -470,10 +517,10 @@ def get_vit_analysis_content(dataset, target_macs, baseline_macs, macs_overshoot
 ================================================================
 - Target MAC budget: {target_macs:.3f}G (efficiency: {mac_efficiency_target:.1f}% of baseline)
 - MAC tolerance: +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}% ({tolerance_range})
-- MLP MAC allocation: Maximum 15% of total target MAC budget (conservative for accuracy)
-- QKV MAC allocation: Maximum 8% of total target MAC budget (attention preservation)
-- Output projections: 8% of target MAC budget (NEVER reduce below this)
-- Attention heads: 2% of target MAC budget (NEVER reduce below this)
+- mlp_multiplier: Maximum 0.40 (prune up to 40% of MLP channels) - conservative for accuracy
+- qkv_multiplier: Maximum 0.15 (prune up to 15% of attention channels) - attention preservation
+- proj_multiplier: Keep at 0.0 (do not prune projection layers)
+- head_multiplier: Keep at 0.0 (do not prune attention heads)
 - Round-to: Master Agent suggested {effective_round_to} for MAC calculation stability
 
 MAC ALLOCATION VERIFICATION FOR {target_macs:.3f}G TARGET:
@@ -528,8 +575,8 @@ MAC-BASED PARAMETER DEFINITIONS:
 2. MAC Allocation Strategy (KEY PARAMETERS):
    - mlp_multiplier: Percentage of target MAC budget allocated to MLP layers
    - qkv_multiplier: Percentage of target MAC budget allocated to attention layers
-   - proj_mac_percent: Always 8% (preserve output projection MAC efficiency)
-   - head_mac_percent: Always 2% (preserve attention head MAC operations)
+   - proj_multiplier: Always 8% (preserve output projection MAC efficiency)
+   - head_multiplier: Always 2% (preserve attention head MAC operations)
    - Total allocation should achieve {target_macs:.3f}G target
 
 3. Round-To (for MAC measurement): Master Agent suggested {effective_round_to} for ViT MAC compatibility
@@ -537,10 +584,14 @@ MAC-BASED PARAMETER DEFINITIONS:
    - 2: Standard for ViTs (attention head MAC compatibility)
    - 4: Hardware MAC efficiency balance
 
-4. MAC Allocation Example for {target_macs:.3f}G target:
-   - Ifmlp_multiplier = 40%, MLP MAC budget = 0.40 × {target_macs:.3f}G = {target_macs * 0.40:.3f}G
-   - If qkv_multiplier = 30%, QKV MAC budget = 0.30 × {target_macs:.3f}G = {target_macs * 0.30:.3f}G
-   - Total core MAC: {target_macs * 0.70:.3f}G + proj/head MAC: {target_macs * 0.10:.3f}G = {target_macs * 0.80:.3f}G
+4. Multiplier Explanation:
+   - Multipliers are DIRECT PRUNING RATIOS (NOT scaling factors after the fix)
+   - mlp_multiplier: Direct pruning ratio for MLP layers (e.g., 0.4 means prune 40% of MLP channels)
+   - qkv_multiplier: Direct pruning ratio for attention layers (e.g., 0.15 means prune 15% of attention channels)
+   - Example: mlp_multiplier=0.40 → 40% MLP pruning (direct)
+   - Example: qkv_multiplier=0.15 → 15% attention pruning (direct)
+   - CRITICAL: Higher multipliers = MORE pruning = FEWER MACs; Lower multipliers = LESS pruning = MORE MACs
+   - Valid range: 0.0 (no pruning) to 0.99 (maximum pruning)
 
 MAC BUDGET CONTEXT:
 - Baseline MACs: {baseline_macs:.3f}G
@@ -564,10 +615,10 @@ Output your ViT MAC allocation strategy as JSON:
   "architecture_type": "vit",
   "master_suggestions_used": true,
   "isomorphic_group_ratios": {{
-    "mlp_mac_percent": YOUR_CALCULATED_MLP_MAC_PERCENTAGE,
-    "qkv_multiplier": YOUR_CALCULATED_qkv_multiplierAGE,
-    "proj_mac_percent": 8.0,
-    "head_mac_percent": 2.0
+    "mlp_multiplier": YOUR_CALCULATED_MLP_RATIO,
+    "qkv_multiplier": YOUR_CALCULATED_QKV_RATIO,
+    "proj_multiplier": 0.0,
+    "head_multiplier": 0.0
   }},
   "expected_mac_breakdown": {{
     "mlp_mac_g": YOUR_MLP_PERCENTAGE * {target_macs:.3f} / 100,
@@ -591,7 +642,7 @@ CRITICAL MAC-BASED REQUIREMENTS:
 - No markdown code blocks
 - Use Master Agent's round_to suggestion: {effective_round_to}
 - Calculate actual MAC allocation percentages that sum to achieve {target_macs:.3f}G
-- Ensuremlp_multiplier + qkv_multiplier + proj_mac_percent + head_mac_percent ≤ 100%
+- Ensuremlp_multiplier + qkv_multiplier + proj_multiplier + head_multiplier ≤ 100%
 - Verify expected MAC breakdown sums to target: {target_macs:.3f}G +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%
 - Focus on MAC budget achievement, not parameter reduction percentages
 """
@@ -651,7 +702,7 @@ def format_vit_history_analysis(history, target_macs, baseline_macs, macs_oversh
         
         # Get MAC allocation from strategy
         isomorphic_group_ratios = best_strategy.get('isomorphic_group_ratios', {})
-        mlp_multiplier = isomorphic_group_ratios.get('mlp_mac_percent', 'N/A')
+        mlp_multiplier = isomorphic_group_ratios.get('mlp_multiplier', 'N/A')
         qkv_multiplier = isomorphic_group_ratios.get('qkv_multiplier', 'N/A')
         
         # Fallback to legacy multipliers if MAC allocation not available
@@ -716,7 +767,7 @@ def format_vit_history_analysis(history, target_macs, baseline_macs, macs_oversh
             else:
                 acc = failure.get('fine_tuned_accuracy', failure.get('zero_shot_accuracy', 0))
             
-            mlp_info = isomorphic_group_ratios.get('mlp_mac_percent', strategy.get('mlp_multiplier', 'N/A'))
+            mlp_info = isomorphic_group_ratios.get('mlp_multiplier', strategy.get('mlp_multiplier', 'N/A'))
             qkv_info = isomorphic_group_ratios.get('qkv_multiplier', strategy.get('qkv_multiplier', 'N/A'))
             
             analysis.append(f"   Failure {i+1}: MLP={mlp_info}, QKV={qkv_info} → {acc:.1f}% accuracy")
@@ -731,7 +782,7 @@ def format_vit_history_analysis(history, target_macs, baseline_macs, macs_oversh
             mac_error = achieved_macs - target_macs
             mac_error_pct = (mac_error / target_macs * 100) if target_macs else 0
             
-            mlp_info = isomorphic_group_ratios.get('mlp_mac_percent', strategy.get('mlp_multiplier', 'N/A'))
+            mlp_info = isomorphic_group_ratios.get('mlp_multiplier', strategy.get('mlp_multiplier', 'N/A'))
             qkv_info = isomorphic_group_ratios.get('qkv_multiplier', strategy.get('qkv_multiplier', 'N/A'))
             
             analysis.append(f"   MAC Failure {i+1}: MLP={mlp_info}, QKV={qkv_info} → "
@@ -749,7 +800,7 @@ def format_vit_history_analysis(history, target_macs, baseline_macs, macs_oversh
         
         # Create config key from MAC allocation or legacy multipliers
         if isomorphic_group_ratios:
-            mlp_val = isomorphic_group_ratios.get('mlp_mac_percent', 0)
+            mlp_val = isomorphic_group_ratios.get('mlp_multiplier', 0)
             qkv_val = isomorphic_group_ratios.get('qkv_multiplier', 0)
             config_key = f"mlp_{mlp_val:.1f}%_qkv_{qkv_val:.1f}%"
         else:
@@ -949,7 +1000,7 @@ MAC Focus: Achieve {target_macs:.3f}G +{macs_overshoot_tolerance_pct:.1f}%/-{mac
             # Include MAC allocation info if available
             isomorphic_group_ratios = strategy.get('isomorphic_group_ratios', {})
             if isomorphic_group_ratios:
-                alloc_info = f", MLP:{isomorphic_group_ratios.get('mlp_mac_percent', 'N/A')}% QKV:{isomorphic_group_ratios.get('qkv_multiplier', 'N/A')}%"
+                alloc_info = f", MLP:{isomorphic_group_ratios.get('mlp_multiplier', 'N/A')}% QKV:{isomorphic_group_ratios.get('qkv_multiplier', 'N/A')}%"
             else:
                 # Legacy multiplier info
                 mlp_mult = strategy.get('mlp_multiplier', 'N/A')
@@ -1299,9 +1350,9 @@ def _format_mac_analysis_for_llm(learning_analysis: dict, target_ratio: float, t
         recommendations = learning_analysis.get('recommendations', {})
         return f"""
 📊 BASELINE MAC ALLOCATION GUIDANCE (No Historical Data):
-- Suggested MLP MAC allocation: {recommendations.get('suggested_mlp_mac_percent', 0):.1f}%
+- Suggested MLP MAC allocation: {recommendations.get('suggested_mlp_multiplier', 0):.1f}%
 - Suggested QKV MAC allocation: {recommendations.get('suggested_qkv_multiplier', 0):.1f}%
-- Expected MLP MAC: {(recommendations.get('suggested_mlp_mac_percent', 0) * target_macs / 100):.2f}G
+- Expected MLP MAC: {(recommendations.get('suggested_mlp_multiplier', 0) * target_macs / 100):.2f}G
 - Expected QKV MAC: {(recommendations.get('suggested_qkv_multiplier', 0) * target_macs / 100):.2f}G
 - Reasoning: {', '.join(recommendations.get('reasoning', ['No reasoning available']))}
 """
@@ -1319,7 +1370,7 @@ def _format_mac_analysis_for_llm(learning_analysis: dict, target_ratio: float, t
 
 🔍 MAC PATTERN ANALYSIS:
 - Average achieved MAC: {pattern.get('avg_achieved_mac_g', 0):.2f}G (target: {target_macs:.2f}G)
-- Average MLP MAC allocation: {pattern.get('avg_mlp_mac_percent', 0):.1f}%
+- Average MLP MAC allocation: {pattern.get('avg_mlp_multiplier', 0):.1f}%
 - Average QKV MAC allocation: {pattern.get('avg_qkv_multiplier', 0):.1f}%
 - Average MAC deviation: {pattern.get('avg_mac_deviation', 0):.3f}G ({pattern.get('avg_mac_deviation_pct', 0):.1f}%)
 - Average MAC efficiency: {avg_efficiency:.1f}% of baseline
@@ -1341,7 +1392,7 @@ def _format_mac_analysis_for_llm(learning_analysis: dict, target_ratio: float, t
 - Accuracy: {best_near_miss.get('accuracy', 0):.2f}%
 - Achieved MAC: {best_near_miss.get('achieved_mac_g', 0):.2f}G
 - MAC deviation: {best_near_miss.get('mac_deviation', 0):.3f}G
-- MLP allocation: {best_near_miss.get('mlp_mac_percent', 0):.1f}%
+- MLP allocation: {best_near_miss.get('mlp_multiplier', 0):.1f}%
 - QKV allocation: {best_near_miss.get('qkv_multiplier', 0):.1f}%
 - Strategy: importance={best_near_miss.get('importance', 'unknown')}, round_to={best_near_miss.get('round_to', 'unknown')}
 """
@@ -1355,11 +1406,11 @@ def _format_mac_analysis_for_llm(learning_analysis: dict, target_ratio: float, t
 - Average overshoot severity: {failure.get('avg_mac_overshoot_severity', 0):.3f}G
 
 💡 INTELLIGENT MAC RECOMMENDATIONS:
-- Suggested MLP MAC allocation: {recommendations.get('suggested_mlp_mac_percent', 0):.1f}%
+- Suggested MLP MAC allocation: {recommendations.get('suggested_mlp_multiplier', 0):.1f}%
 - Suggested QKV MAC allocation: {recommendations.get('suggested_qkv_multiplier', 0):.1f}%
-- Expected MLP MAC: {(recommendations.get('suggested_mlp_mac_percent', 0) * target_macs / 100):.2f}G
+- Expected MLP MAC: {(recommendations.get('suggested_mlp_multiplier', 0) * target_macs / 100):.2f}G
 - Expected QKV MAC: {(recommendations.get('suggested_qkv_multiplier', 0) * target_macs / 100):.2f}G
-- Total allocated: {(recommendations.get('suggested_mlp_mac_percent', 0) + recommendations.get('suggested_qkv_multiplier', 0)):.1f}%
+- Total allocated: {(recommendations.get('suggested_mlp_multiplier', 0) + recommendations.get('suggested_qkv_multiplier', 0)):.1f}%
 - Confidence level: {recommendations.get('confidence', 'unknown')}
 - Reasoning: {', '.join(recommendations.get('reasoning', ['No reasoning available']))}
 
@@ -1423,7 +1474,7 @@ Strategy: High-Accuracy Tiny MAC Adjustment
         return f"""
 Strategy: Baseline MAC Allocation
 - Target MAC: {math_calc.get('target_mac_g', 0):.2f}G
-- MLP allocation: {math_calc.get('suggested_mlp_mac_percent', 0):.1f}%
+- MLP allocation: {math_calc.get('suggested_mlp_multiplier', 0):.1f}%
 - QKV allocation: {math_calc.get('suggested_qkv_multiplier', 0):.1f}%
 - Expected MLP MAC: {math_calc.get('expected_mlp_mac_g', 0):.2f}G
 - Expected QKV MAC: {math_calc.get('expected_qkv_mac_g', 0):.2f}G

@@ -192,7 +192,7 @@ class PruningSafetyValidator:
             'importance_criterion': 'taylor',
             'round_to': 2 if dataset.lower() == 'imagenet' else 1,
             'global_pruning': True,
-            'rationale': f'Safe fallback ratios for {dataset} - guaranteed not to cause catastrophic failure',
+            'rationale': f'Research-based safe fallback for {dataset}: Taylor importance is SOTA with isomorphic pruning',
             'fallback_used': True,
             'safety_validated': True
         }

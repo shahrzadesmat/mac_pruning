@@ -40,5 +40,4 @@ pbench.forward_patch.patch_timm_forward()
 
 # Load environment variables and setup
 _ = load_dotenv(find_dotenv())
-# openai.api_key = os.environ['OPENAI_API_KEY']
-# nest_asyncio.apply()
+

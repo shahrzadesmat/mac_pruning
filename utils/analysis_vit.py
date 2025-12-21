@@ -563,6 +563,9 @@ class ViTLearningAnalyzer:
 
     def _create_baseline_guidance(self, target_macs, dataset):
         """Create baseline MAC allocation guidance when insufficient historical data"""
+
+        baseline_importance = 'taylor'
+
         if dataset.lower() == 'imagenet':
             # Conservative baseline for ImageNet - allocate smaller multiplierages of total MAC
             baseline_mlp_multiplier = 8.0   # 8% of total MAC for MLP layers
@@ -583,8 +586,9 @@ class ViTLearningAnalyzer:
             'recommendations': {
                 'suggested_mlp_multiplier': baseline_mlp_multiplier,
                 'suggested_qkv_multiplier': baseline_qkv_multiplier,
+                'suggested_importance_criterion': baseline_importance,
                 'confidence': 'low',
-                'reasoning': [f"Baseline MAC allocation guidance for {dataset} (insufficient historical data)"],
+                'reasoning': [f"Research-based baseline for {dataset}: Using Taylor importance (SOTA with isomorphic pruning)"],
                 'mathematical_calculation': {
                     'baseline_approach': True,
                     'target_mac_g': target_macs,
@@ -605,6 +609,13 @@ class ViTLearningAnalyzer:
 
     def create_enhanced_learning_prompt(self, model_name, history, dataset, target_macs, baseline_macs, macs_overshoot_tolerance_pct=1.0, macs_undershoot_tolerance_pct=5.0, strategic_guidance=None):
         """Create an enhanced prompt with comprehensive MAC-based learning analysis"""
+
+        round_to_instruction = """Use round_to=2 as the standard choice because:
+    1. PRECISION: Finer granularity allows more precise MAC targeting
+    2. ACCURACY PRESERVATION: Smaller pruning increments reduce risk of removing critical channel combinations
+    3. FINE-GRAINED CONTROL: Enables hitting exact MAC budgets more accurately
+    4. ITERATIVE REFINEMENT: Easier to fine-tune results with smaller steps"""
+
         # Get comprehensive MAC-based analysis
         learning_analysis = self.analyze_vit_multiplier_patterns(
             history, dataset,
@@ -636,6 +647,18 @@ YOU MUST NOT USE ANY OF THESE (importance_criterion, round_to) COMBINATIONS.
         
         prompt = f"""You are a ViT pruning expert with advanced MAC-based learning capabilities.
 
+        RESEARCH-BASED IMPORTANCE CRITERION PRIORITY:
+        Your system uses isomorphic pruning (global_pruning=true) which groups isomorphic structures.
+        Combined with Taylor criterion, this achieves SOTA performance:
+        - For ViTs: Isomorphic + Taylor dramatically outperforms magnitude-based methods (DeiT-Tiny: 74.52% → 77.50%)
+        - Taylor uses gradient information vs. L1/L2 which are unreliable for heterogeneous transformer structures
+        - Your isomorphic grouping addresses the parameter scale divergence problem in ViTs
+
+        RECOMMENDED: Start with "taylor" as importance_criterion based on research evidence.
+
+
+CRITICAL ROUND_TO INSTRUCTION: {round_to_instruction}
+
 CRITICAL MAC-BASED LEARNING TASK: Based on comprehensive historical analysis, determine optimal ViT MAC allocation for {target_macs:.2f}G target MAC operations on {dataset}.
 
 TARGET SPECIFICATIONS:
@@ -657,7 +680,7 @@ OUTPUT FORMAT (JSON only):
     "baseline_mac_g": {(baseline_macs if baseline_macs else 0.0):.3f},
     "macs_overshoot_tolerance_pct": {macs_overshoot_tolerance_pct},
     "macs_undershoot_tolerance_pct": {macs_undershoot_tolerance_pct},
-    "round_to": 2,
+    "round_to": 2,  // Use 2 unless historical analysis shows repeated failures with round_to=2
     "global_pruning": true,
     "rationale": "MAC-BASED LEARNING CALCULATION: [Explain how you used the historical MAC analysis to determine allocation multiplierages]. MATHEMATICAL REASONING: [Show your MAC allocation calculation]. CONFIDENCE: [State your confidence level and why].",
     "architecture_type": "vit",

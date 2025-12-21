@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict
 import traceback
+import random
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -70,16 +71,17 @@ class AnalysisAgent:
     def _force_safe_complete_strategy(self, strategy_dict, avoid_complete_signatures, target_ratio, dataset):
         """Generate a strategy that avoids ALL failed complete signatures"""
         
-        # Safe starting points based on dataset
         if dataset.lower() == 'imagenet':
             safe_combinations = [
-                ('taylor', 2, 0.3, 0.2), ('taylor', 4, 0.25, 0.15),
-                ('l1norm', 2, 0.35, 0.25), ('l2norm', 4, 0.3, 0.2)
+                ('taylor', 1, 0.25, 0.15), ('taylor', 2, 0.3, 0.2), ('taylor', 4, 0.25, 0.15), ('taylor', 8, 0.2, 0.1), ('taylor', 16, 0.15, 0.1),
+                ('l1norm', 1, 0.3, 0.2), ('l1norm', 2, 0.35, 0.25), ('l1norm', 4, 0.3, 0.2), ('l1norm', 8, 0.25, 0.15), ('l1norm', 16, 0.2, 0.1),
+                ('l2norm', 1, 0.25, 0.2), ('l2norm', 2, 0.3, 0.2), ('l2norm', 4, 0.3, 0.2), ('l2norm', 8, 0.25, 0.15), ('l2norm', 16, 0.2, 0.1)
             ]
         else:
             safe_combinations = [
-                ('l1norm', 2, 0.5, 0.3), ('taylor', 4, 0.4, 0.25),
-                ('l2norm', 2, 0.45, 0.3), ('taylor', 1, 0.4, 0.2)
+                ('taylor', 1, 0.4, 0.2), ('taylor', 2, 0.45, 0.25), ('taylor', 4, 0.4, 0.25), ('taylor', 8, 0.35, 0.2), ('taylor', 16, 0.3, 0.15),
+                ('l1norm', 1, 0.5, 0.3), ('l1norm', 2, 0.5, 0.3), ('l1norm', 4, 0.45, 0.25), ('l1norm', 8, 0.4, 0.2), ('l1norm', 16, 0.35, 0.2),
+                ('l2norm', 1, 0.45, 0.25), ('l2norm', 2, 0.45, 0.3), ('l2norm', 4, 0.4, 0.25), ('l2norm', 8, 0.35, 0.2), ('l2norm', 16, 0.3, 0.15)
             ]
         
         for importance, round_to, mlp_mult, qkv_mult in safe_combinations:
@@ -517,6 +519,13 @@ class AnalysisAgent:
                 return None
             return v / 1e9 if v > 1e6 else v
 
+        round_to_instruction = """Use round_to=2 as the standard choice because:
+        1. PRECISION: Finer granularity allows more precise MAC targeting
+        2. ACCURACY PRESERVATION: Smaller pruning increments reduce risk of removing critical channel combinations
+        3. FINE-GRAINED CONTROL: Enables hitting exact MAC budgets more accurately
+        4. ITERATIVE REFINEMENT: Easier to fine-tune results with smaller steps"""
+
+
         # Pull optional MACs-first context
         baseline_macs = None
         target_macs = None
@@ -560,6 +569,7 @@ class AnalysisAgent:
             =====================
             - Baseline MACs: {baseline_str}
             - Target  MACs:  {target_macs:.3f}G
+            CRITICAL ROUND_TO INSTRUCTION: {round_to_instruction}
             - Overshoot tolerance (strict): +{macs_overshoot_tolerance_pct:.1f}%
             - Undershoot tolerance (lenient): -{macs_undershoot_tolerance_pct:.1f}%
             - Acceptable range: {target_macs * (1 - macs_undershoot_tolerance_pct / 100):.3f}G - {target_macs * (1 + macs_overshoot_tolerance_pct / 100):.3f}G
@@ -842,8 +852,32 @@ class AnalysisAgent:
         """
         Use LLM to determine baseline CNN strategy for first attempt
         """
+
+        round_to_instruction = """Use round_to=2 as the standard choice because:
+        1. PRECISION: Finer granularity allows more precise MAC targeting
+        2. ACCURACY PRESERVATION: Smaller pruning increments reduce risk of removing critical channel combinations  
+        3. FINE-GRAINED CONTROL: Enables hitting exact MAC budgets more accurately
+        4. ITERATIVE REFINEMENT: Easier to fine-tune results with smaller steps"""
+
         
         prompt = f"""You are an expert in CNN pruning for {model_name} on {dataset}.
+
+        RESEARCH-BASED IMPORTANCE CRITERION PRIORITY:
+        Your system uses isomorphic pruning (global_pruning=true) which groups isomorphic structures.
+        Combined with Taylor criterion, this achieves SOTA performance:
+        - For CNNs: Isomorphic + Taylor shows >93% correlation with oracle ranking
+        - For ViTs: Isomorphic + Taylor dramatically outperforms magnitude-based methods
+        - Taylor uses gradient information vs. L1/L2 which rely on potentially biased weight distributions
+
+        CRITICAL IMPORTANCE SELECTION:
+        Use "taylor" as your first choice unless you have specific evidence from history that Taylor consistently failed.
+        Taylor importance uses gradient information and generally provides superior accuracy preservation.
+        Only deviate from Taylor if you can justify why based on the specific model and dataset combination.
+
+        RECOMMENDED: Start with "taylor" as importance_criterion based on research evidence. Consider l1norm or l2norm only if historical analysis shows consistent Taylor underperformance for this specific model/dataset combination.
+
+
+        CRITICAL ROUND_TO INSTRUCTION: {round_to_instruction}
 
         TASK: Determine the baseline CNN channel pruning strategy to achieve {target_ratio*100:.0f}% parameter reduction.
 
@@ -868,7 +902,7 @@ class AnalysisAgent:
         {{
             "importance_criterion": "taylor|l1norm|l2norm",
             "channel_pruning_ratio": YOUR_CONSERVATIVE_ESTIMATE,
-            "round_to": X,
+            "round_to": 2,  // Use 2 unless historical analysis shows repeated failures
             "global_pruning": true,
             "rationale": "Baseline CNN strategy for {model_name} on {dataset}: Using conservative channel ratio to target {target_ratio*100:.0f}% reduction while preserving accuracy. Channel ratio chosen because [reasoning], importance chosen because [reasoning].",
             "architecture_type": "cnn"
@@ -904,16 +938,16 @@ class AnalysisAgent:
             # Conservative fallback when LLM completely fails
             if 'resnet' in model_name.lower():
                 fallback_channel = target_ratio * 0.6
-                fallback_importance = "taylor" if dataset.lower() == 'imagenet' else "l1norm"
-                fallback_round_to = 8 if dataset.lower() == 'imagenet' else 4
+                fallback_importance = "taylor"
+                fallback_round_to = 2 if dataset.lower() == 'imagenet' else 4
             elif 'convnext' in model_name.lower():
                 fallback_channel = target_ratio * 0.5  # More conservative for ConvNext
                 fallback_importance = "taylor"
-                fallback_round_to = 4
+                fallback_round_to = 2
             else:
                 fallback_channel = target_ratio * 0.7
-                fallback_importance = "taylor" if dataset.lower() == 'imagenet' else "l1norm"
-                fallback_round_to = 4
+                fallback_importance = "taylor"
+                fallback_round_to = 2
             
             return {
                 "importance_criterion": fallback_importance,
@@ -937,15 +971,15 @@ class AnalysisAgent:
         if 'resnet' in model_name.lower():
             emergency_channel = target_ratio * 0.4  # Very conservative
             emergency_importance = "taylor"
-            emergency_round_to = 4
+            emergency_round_to = 2
         elif 'convnext' in model_name.lower():
             emergency_channel = target_ratio * 0.3  # Ultra conservative for ConvNext
             emergency_importance = "taylor"
             emergency_round_to = 2
         else:
             emergency_channel = target_ratio * 0.5
-            emergency_importance = "l1norm"
-            emergency_round_to = 4
+            emergency_importance = "taylor"
+            emergency_round_to = 2
         
         print(f"[🔧] Emergency CNN fallback: channel={emergency_channel:.4f}, {emergency_importance}, round_to={emergency_round_to}")
 
@@ -975,6 +1009,13 @@ class AnalysisAgent:
         Use LLM to calculate CNN strategy based on Master Agent's strategic guidance.
         MACs-first: if target MACs are provided in strategic_guidance, aim to hit them within tolerance.
         """
+
+        round_to_instruction = """Use round_to=2 as the standard choice because:
+    1. PRECISION: Finer granularity allows more precise MAC targeting
+    2. ACCURACY PRESERVATION: Smaller pruning increments reduce risk of removing critical channel combinations
+    3. FINE-GRAINED CONTROL: Enables hitting exact MAC budgets more accurately
+    4. ITERATIVE REFINEMENT: Easier to fine-tune results with smaller steps"""
+
 
         # ---------- Pull MACs-first context (if provided) ----------
         def _to_g(val):
@@ -1049,6 +1090,8 @@ class AnalysisAgent:
 
         # ---------- Prompt (MACs-first primary, ratio as fallback) ----------
         prompt = f"""You are an expert Analysis Agent in CNN pruning for {model_name} on {dataset}.
+
+        CRITICAL ROUND_TO INSTRUCTION: {round_to_instruction}
 
         {guidance_text}
 
@@ -2142,10 +2185,14 @@ class AnalysisAgent:
             - Valid: 1, 2, 4, 8, 16, or null
             - NEVER use: 0.1, 0.01, 0.5, or any decimals
 
-            IMPORTANCE CRITERION OPTIONS:
-            - "taylor": Gradient-based, most accurate but computationally expensive
-            - "l1norm": Magnitude-based, efficient, good for smaller datasets
-            - "l2norm": Alternative magnitude-based approach
+            IMPORTANCE CRITERION OPTIONS (RESEARCH-BASED PRIORITY ORDER):
+            - "taylor": PREFERRED - Uses gradient information, proven superior to magnitude-based methods
+            - "l1norm": FALLBACK - Use only if Taylor has failed repeatedly 
+            - "l2norm": ALTERNATIVE FALLBACK - Use only if both Taylor and L1 have failed
+
+            CRITICAL: Your system already uses isomorphic pruning by default (global_pruning=true), so "taylor" gives you the optimal Isomorphic + Taylor combination that achieves SOTA results.
+
+            DEFAULT CHOICE: Always start with "taylor" unless historical analysis shows repeated Taylor failures.
 
             OUTPUT FORMAT (JSON only):
             {{
@@ -2713,7 +2760,7 @@ class AnalysisAgent:
             else:
                 fallback_mlp = min(1.5, target_ratio / 0.6)  # moderate for CIFAR-10
                 fallback_qkv = min(1.0, target_ratio / 0.4)  # still cautious with attention
-                fallback_importance = "l1norm"
+                fallback_importance = "taylor"
                 fallback_round_to = 1
 
             return {
@@ -2755,8 +2802,8 @@ class AnalysisAgent:
             # More permissive but still conservative
             emergency_mlp = min(1.2, target_ratio * 0.8)
             emergency_qkv = min(0.6, target_ratio * 0.4)
-            emergency_importance = "l1norm"
-            emergency_round_to = 1
+            emergency_importance = "taylor"
+            emergency_round_to = 2
 
         print(f"[🔧] Emergency ViT fallback: mlp={emergency_mlp:.3f}, qkv={emergency_qkv:.3f}, "
             f"{emergency_importance}, round_to={emergency_round_to} (tol +{macs_overshoot_tolerance_pct:.1f}%/-{macs_undershoot_tolerance_pct:.1f}%)")
@@ -3376,19 +3423,10 @@ class AnalysisAgent:
     # ENHANCED HISTORY FORMATTING FOR LEARNING
 
     def _determine_round_to(self, dataset):
-        """
-        ANALYSIS AGENT determines round_to based on dataset and hardware considerations
-        NOT from Master Agent suggestions
-        """
         if dataset.lower() == 'imagenet':
-            # For ImageNet, use hardware-efficient values
-            return 8  # Good balance of efficiency and flexibility
+            return random.choice([1, 2, 4, 8, 16, None])  # All possible workflow values
         else:
-            # For smaller datasets like CIFAR-10, more flexible
-            return 4  # Smaller models can use finer granularity
-
-
-
+            return random.choice([1, 2, 4, 8, 16, None])  # All possible workflow values
 
     async def _call_llm_with_prompt(self, enhanced_prompt, state):
         """Call LLM with the enhanced prompt and robust JSON parsing"""
@@ -3608,15 +3646,15 @@ class AnalysisAgent:
             # Conservative fallback when LLM completely fails
             if 'resnet' in model_name.lower():
                 fallback_channel = target_ratio * 0.6
-                fallback_importance = "taylor" if dataset.lower() == 'imagenet' else "l1norm"
-                fallback_round_to = 8 if dataset.lower() == 'imagenet' else 4
+                fallback_importance = "taylor"
+                fallback_round_to = 2 if dataset.lower() == 'imagenet' else 4
             elif 'mobilenet' in model_name.lower():
                 fallback_channel = target_ratio * 0.7
-                fallback_importance = "l1norm"
+                fallback_importance = "taylor"
                 fallback_round_to = 2
             else:
                 fallback_channel = target_ratio * 0.7
-                fallback_importance = "taylor" if dataset.lower() == 'imagenet' else "l1norm"
+                fallback_importance = "taylor"
                 fallback_round_to = 4
             
             return {
@@ -3640,15 +3678,15 @@ class AnalysisAgent:
         if 'resnet' in model_name.lower():
             emergency_channel = target_ratio * 0.5  # Very conservative
             emergency_importance = "taylor"
-            emergency_round_to = 4
+            emergency_round_to = 2
         elif 'mobilenet' in model_name.lower():
             emergency_channel = target_ratio * 0.6
-            emergency_importance = "l1norm"
+            emergency_importance = "taylor"
             emergency_round_to = 2
         else:
             emergency_channel = target_ratio * 0.55
-            emergency_importance = "l1norm"
-            emergency_round_to = 4
+            emergency_importance = "taylor"
+            emergency_round_to = 2
         
         # print(f"[🔧] Emergency fallback: channel={emergency_channel:.4f}, {emergency_importance}, round_to={emergency_round_to}")
         
